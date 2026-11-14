@@ -172,7 +172,7 @@
 
 /* Lanes. Every lane spans the board's height, so a card dragged straight across from low in a
    tall lane still lands on a drop target (the V0.10 drag regression). */
-.board {position:relative;min-width:0;}
+.board {position:relative;min-width:0;container-type:inline-size;container-name:board;}
 .board-tabs {display:none;}
 .board-lanes {display:grid;grid-template-columns:repeat(4, minmax(232px, 1fr));gap:14px;align-items:stretch;overflow-x:auto;padding-bottom:4px;}
 .lane {position:relative;display:flex;flex-direction:column;gap:10px;min-width:0;min-height:280px;padding:10px;border-radius:var(--lane-radius);background:var(--sunken);border:1px solid var(--line);
@@ -228,7 +228,7 @@
 .design-drag-handle:hover {background:var(--hover);}
 
 /* Done: a small gallery of delivered work. */
-.shipped-grid {grid-template-columns:repeat(auto-fill, minmax(148px, 1fr));}
+.shipped-grid {grid-template-columns:repeat(auto-fill, minmax(170px, 1fr));}
 .kanban-card--shipped {grid-template-columns:52px minmax(0, 1fr);grid-template-rows:auto 1fr;column-gap:10px;row-gap:4px;padding:8px;}
 .kanban-card--shipped .shipped-thumb {grid-row:1 / span 2;height:52px;}
 .shipped-thumb {display:grid;place-items:center;height:64px;border-radius:8px;color:var(--hue);
@@ -293,8 +293,9 @@
 
 /* Phones (A): stage tabs show one lane; the detail is a bottom sheet. Pipeline and This week
    stay on wider screens (the summary tiles already carry the totals). */
-/* Tablet and narrow desktop: a 2 x 2 grid so every lane (Done included) is on screen. */
-@media (min-width: 640px) and (max-width: 1179px) {
+/* When the board is narrower than four lanes (4 x 232 + 3 x 14 = 970px), a 2 x 2 grid keeps every
+   lane, Done included, on screen. Keyed to the board, not the viewport, as the sidebar width varies. */
+@container board (max-width: 969px) {
   .board-lanes {grid-template-columns:repeat(2, minmax(0, 1fr));overflow-x:visible;}
 }
 @media (max-width: 639px) {

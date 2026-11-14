@@ -49,7 +49,7 @@ test('dragging a design card straight across into another stage moves it on the 
   }
 });
 
-test('at tablet width all four lanes are on screen and a mouse drag into Done works', async ({ page }, info) => {
+test('at 820 and 1280 all four lanes are on screen and a mouse drag into Done works', async ({ page }, info) => {
   test.skip(info.project.name !== 'desktop', 'a mouse drag at 820 wide; the tablet project is touch-only');
   await page.setViewportSize({ width: 820, height: 1180 });
   await devSignIn(page, { as: 'leadership' }, '/design');
@@ -59,16 +59,19 @@ test('at tablet width all four lanes are on screen and a mouse drag into Done wo
     expect((await page.request.post(`/api/design-requests/${id}/move`, { data: { stage: 'in-review' } })).ok()).toBe(true);
     await page.goto('/design?view=board');
     await settle(page);
-    // Every lane sits inside the viewport (a 2 x 2 grid), with no sideways scrolling.
-    const vw = await page.evaluate(() => window.innerWidth);
-    for (const l of ['todo', 'doing', 'review', 'done'] as const) {
-      const box = (await lane(page, l).boundingBox())!;
-      expect(box.x, `${l} left edge`).toBeGreaterThanOrEqual(0);
-      expect(box.x + box.width, `${l} right edge`).toBeLessThanOrEqual(vw + 0.5);
+    // Every lane sits inside the board and the viewport (2 x 2 here), at 820 and on a 1280 laptop
+    // with the sidebar; what users see, not scrollWidth (a hidden tooltip can poke past the edge).
+    for (const width of [1280, 820]) {
+      await page.setViewportSize({ width, height: 1180 });
+      const vw = await page.evaluate(() => window.innerWidth);
+      const board = (await page.locator('.board-lanes').boundingBox())!;
+      for (const l of ['todo', 'doing', 'review', 'done'] as const) {
+        const box = (await lane(page, l).boundingBox())!;
+        expect(box.x, `${l} left edge at ${width}`).toBeGreaterThanOrEqual(board.x - 0.5);
+        expect(box.x + box.width, `${l} right edge at ${width}`).toBeLessThanOrEqual(Math.min(board.x + board.width, vw) + 0.5);
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `no page overflow at ${width}`).toBe(true);
     }
-    const scroller = await page.locator('.board-lanes').evaluate((el) => el.scrollWidth <= el.clientWidth + 1);
-    expect(scroller, 'the board does not scroll sideways').toBe(true);
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
     // The card waits in Review, the lane beside Done, so both are on screen for the drag.
     const card = page.locator(`[data-request="${id}"]`);
