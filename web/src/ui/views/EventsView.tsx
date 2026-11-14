@@ -40,7 +40,7 @@ function listColumns(now: number): Column<EventListItem>[] {
   return [
     {
       key: 'name',
-      label: `Event · ${effectiveTimezone()}`,
+      label: 'Event',
       cardLabel: 'Event',
       primary: true,
       render: (e) => (
@@ -54,18 +54,11 @@ function listColumns(now: number): Column<EventListItem>[] {
               {e.name}
             </a>
           )}
-          <span class="cell-sub">
-            {whenShort(e.startsAt, e.endsAt)}
-            {e.location && (
-              <>
-                <br />
-                {e.location}
-              </>
-            )}
-          </span>
+          {e.location && <span class="cell-sub">{e.location}</span>}
         </>
       ),
     },
+    { key: 'when', label: `When · ${effectiveTimezone()}`, cardLabel: 'When', render: (e) => <span class="bs-nowrap">{whenShort(e.startsAt, e.endsAt)}</span> },
     { key: 'host', label: 'Host', render: (e) => hostLabel(e) ?? <span class="muted">—</span> },
     { key: 'status', label: 'Status', render: (e) => <EventStatusBadge event={e} now={now} /> },
     {
@@ -327,7 +320,7 @@ export default function EventsView() {
         </Empty>
       ) : (
         <section id="view-list" data-state="ready">
-          <DataTable rows={listOrder(ready!.items, now)} columns={listColumns(now)} rowKey={(e) => e.id} caption="Events" />
+          <DataTable rows={listOrder(ready!.items, now)} columns={listColumns(now)} rowKey={(e) => e.id} caption="Events" bs />
           {ready!.nextCursor && <p class="muted small">Showing the first {ready!.items.length} events. Narrow the search to find older ones.</p>}
         </section>
       )}

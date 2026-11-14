@@ -4,6 +4,7 @@ import { categoryHue, STATUS_HUE, type Hue } from '../../lib/colors';
 import type { PurchaseStatus } from '../../lib/domain';
 import { pct, STATUS_LABEL, STATUS_TONE, type Tone } from '../../lib/format';
 import { Icon, type IconName } from './Icon';
+import '../../styles/bs-table.css';
 
 /** A status: a coloured dot plus a written label (never colour alone). `hue` overrides the tone's dot. */
 export function Badge({ tone, hue, children }: { tone: Tone; hue?: Hue | null; children: ComponentChildren }) {
@@ -165,6 +166,8 @@ export interface Column<T> {
   primary?: boolean;
   /** Hide on phones. */
   hideOnPhone?: boolean;
+  /** Hide on tablets and phones (Buildspace-style tables only). */
+  hideOnTablet?: boolean;
   /** Plain-text label for the phone card (defaults to label when it is a string). */
   cardLabel?: string;
 }
@@ -182,6 +185,7 @@ export function DataTable<T>({
   dense,
   showCaption,
   wide,
+  bs,
 }: {
   rows: T[];
   columns: Column<T>[];
@@ -193,27 +197,29 @@ export function DataTable<T>({
   showCaption?: boolean;
   /** Many columns: use stacked cards below desktop width, not only on phones. */
   wide?: boolean;
+  /** Buildspace-style table (bs-table.css) instead of the hairline one. */
+  bs?: boolean;
 }) {
   return (
-    <div class="table-wrap">
-      <table class={`dt${dense ? ' dt--dense' : ''}${wide ? ' dt--wide' : ''}`}>
+    <div class={bs ? 'table-wrap bs-wrap' : 'table-wrap'} {...(bs ? { tabIndex: 0, role: 'region', 'aria-label': caption ?? 'Table' } : {})}>
+      <table class={bs ? 'bs-table' : `dt${dense ? ' dt--dense' : ''}${wide ? ' dt--wide' : ''}`}>
         {caption && <caption class={showCaption ? 'dt-caption' : 'visually-hidden'}>{caption}</caption>}
         <thead>
           <tr>
             {columns.map((c) => (
-              <th key={c.key} scope="col" class={c.num ? 'num' : undefined}>
+              <th key={c.key} scope="col" class={[c.num ? 'num' : '', bs && c.hideOnTablet ? 'bs-hide-tablet' : ''].filter(Boolean).join(' ') || undefined}>
                 {c.label}
               </th>
             ))}
           </tr>
         </thead>
-        <tbody>
+        <tbody class={bs ? 'motion-list' : undefined}>
           {rows.map((row) => (
             <tr key={rowKey(row)}>
               {columns.map((c) => (
                 <td
                   key={c.key}
-                  class={[c.num ? 'num' : '', c.primary ? 'dt-primary' : '', c.hideOnPhone ? 'dt-hide-phone' : ''].filter(Boolean).join(' ') || undefined}
+                  class={[c.num ? 'num' : '', c.primary ? 'dt-primary' : '', c.hideOnPhone ? (bs ? 'bs-hide-phone' : 'dt-hide-phone') : '', bs && c.hideOnTablet ? 'bs-hide-tablet' : ''].filter(Boolean).join(' ') || undefined}
                   data-label={c.cardLabel ?? (typeof c.label === 'string' ? c.label : '')}
                 >
                   {c.render(row)}

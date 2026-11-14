@@ -1,0 +1,140 @@
+/*
+ * The Buildspace + Launchpad table, shared (V0.11) by Buildspace, Events and Finance requests.
+ * Markup: <div class="table-wrap bs-wrap"><table class="bs-table">. Columns scroll inside the
+ * wrapper below ~800px; under 600px each row becomes a stacked card whose cells show their
+ * data-label. Title / sub lines use .bs-title/.bs-sub, or .cell-title/.cell-sub in DataTable.
+ */
+/* Positioned so the absolutely-placed .visually-hidden spans inside cells are clipped with the table
+   instead of widening the page (R-1). */
+.bs-wrap {
+  position: relative;
+  overflow-x: auto;
+  max-width: 100%;
+}
+.bs-table {
+  width: 100%;
+  font-size: 12px;
+  border-collapse: collapse;
+}
+.bs-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface);
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 500;
+  text-align: left;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.bs-table td {
+  padding: 16px 14px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+.bs-table th.num,
+.bs-table td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.bs-table tbody tr:hover {
+  background: var(--sunken);
+}
+.bs-table td:first-child {
+  min-width: 180px;
+}
+.bs-table td .bs-title + .bs-title {
+  display: block;
+  margin-top: 6px;
+}
+/* DataTable cells: the same title / sub lines as the Buildspace ones. */
+.bs-table .cell-title {
+  display: block;
+  padding: 3px 0;
+  font-weight: 600;
+  color: var(--text);
+  text-decoration: none;
+}
+.bs-table .cell-title:hover {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.bs-table .cell-sub {
+  display: block;
+  margin-top: 5px;
+  font-size: 12px;
+  color: var(--muted);
+}
+@media (max-width: 1099px) {
+  .bs-table th,
+  .bs-table td {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+  .bs-table .bs-hide-tablet {
+    display: none;
+  }
+}
+@media (max-width: 600px) {
+  .bs-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .bs-table,
+  .bs-table tbody,
+  .bs-table tr,
+  .bs-table td {
+    display: block;
+    width: 100%;
+  }
+  .bs-table tr {
+    border-bottom: 1px solid var(--line);
+    padding: 16px 0;
+  }
+  .bs-table td {
+    padding: 5px 0;
+    border: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .bs-table td:first-child {
+    padding-bottom: 12px;
+    min-width: 0;
+  }
+  .bs-table td:not(:first-child) {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    text-align: right;
+  }
+  .bs-table td:not(:first-child):before {
+    content: attr(data-label);
+    color: var(--muted);
+    font-size: 11px;
+    text-align: left;
+    flex-shrink: 0;
+  }
+  .bs-table td.bs-hide-phone {
+    display: none;
+  }
+  .bs-table td .bs-sub {
+    margin: 3px 0;
+  }
+  .bs-table td .bs-title {
+    min-height: 44px;
+  }
+  .bs-table td .cell-title {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+  }
+}
+.bs-nowrap {
+  white-space: nowrap;
+}

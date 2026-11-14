@@ -606,7 +606,7 @@ function BuildspaceContent({
             </div>
           ) : (
             <div
-              class="table-wrap"
+              class="table-wrap bs-wrap"
               tabIndex={0}
               aria-label="Buildspace + Launchpad directory"
             >

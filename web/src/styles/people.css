@@ -100,6 +100,22 @@
 /* Pagination inside the card */
 .people-foot .action-row {gap: 8px;}
 
+/* Tablet: the Members table drops Campus and Joined (still in the drawer) so Grad year and Officer
+   fit whole and emails don't break mid-word (R-7). Widths are !important to beat the inline <col> ones. */
+@media (min-width: 641px) and (max-width: 1099px) {
+  [data-section="members"] .people-table col:nth-child(5),
+  [data-section="members"] .people-table col:nth-child(6),
+  [data-section="members"] .people-table th:nth-child(5),
+  [data-section="members"] .people-table th:nth-child(6),
+  [data-section="members"] .people-table td:nth-child(5),
+  [data-section="members"] .people-table td:nth-child(6) {display: none;}
+  [data-section="members"] .people-table col:nth-child(1) {width: 28% !important;}
+  [data-section="members"] .people-table col:nth-child(2) {width: 29% !important;}
+  [data-section="members"] .people-table col:nth-child(3) {width: 16% !important;}
+  [data-section="members"] .people-table col:nth-child(4) {width: 12% !important;}
+  [data-section="members"] .people-table col:nth-child(7) {width: 15% !important;}
+}
+
 @media (max-width: 640px) {
   .people-tools {padding: 12px;}
   .people-search {max-width: none; flex-basis: 100%;}
