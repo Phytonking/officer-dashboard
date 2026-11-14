@@ -178,3 +178,47 @@ test('External Contacts: open, stats, edit from Manage, Back closes', async ({ p
     await page.request.delete(`/api/contacts/${id}`);
   }
 });
+
+test('Buildspace builder: every drawer tab is reachable, with a visible cue when the strip is clipped (R-6)', async ({ page }) => {
+  const errors = watchErrors(page);
+  await devLogin(page, 'director');
+  await page.goto('/buildspace-launchpad?person=bs-person-01');
+  await settle(page);
+  const d = openDialog(page);
+  const wrap = d.locator('.person-tabs');
+  const strip = wrap.locator('.tabs');
+  const tabs = strip.getByRole('tab');
+  await expect(tabs).toHaveCount(6);
+  const clipped = await strip.evaluate((el) => el.scrollWidth > el.clientWidth + 1);
+  if (clipped) {
+    // At the start the end is cut: it fades and shows an arrow; the start shows neither.
+    await expect(wrap).toHaveAttribute('data-scroll-end', 'true');
+    await expect(wrap).not.toHaveAttribute('data-scroll-start', /.*/);
+    await expect(wrap.locator('.person-tabs-arrow.is-end')).toBeVisible();
+    await expect(wrap.locator('.person-tabs-arrow.is-start')).toBeHidden();
+    expect(await strip.evaluate((el) => getComputedStyle(el).maskImage || (getComputedStyle(el) as any).webkitMaskImage)).toContain('gradient');
+    // The arrow pages the strip; then the start is cut instead.
+    await wrap.locator('.person-tabs-arrow.is-end').click();
+    await expect(wrap).toHaveAttribute('data-scroll-start', 'true');
+    await expect(wrap.locator('.person-tabs-arrow.is-start')).toBeVisible();
+    await wrap.locator('.person-tabs-arrow.is-start').click();
+    await expect.poll(() => strip.evaluate((el) => el.scrollLeft)).toBe(0);
+  }
+  // Keyboard: End selects the last tab and scrolls it fully into the strip.
+  await tabs.first().focus();
+  await page.keyboard.press('End');
+  const last = strip.getByRole('tab', { name: 'Add entry', exact: true });
+  await expect(last).toHaveAttribute('aria-selected', 'true');
+  const inView = () => last.evaluate((t) => {
+    const s = t.closest('.tabs')!.getBoundingClientRect(), r = t.getBoundingClientRect();
+    return r.left >= s.left - 1 && r.right <= s.right + 1;
+  });
+  await expect.poll(inView).toBe(true);
+  // Every tab can be clicked (each scrolls into view first).
+  for (const name of ['Overview', 'Timeline', 'Requests', 'Purchases', 'Absences', 'Add entry']) {
+    await strip.getByRole('tab', { name, exact: true }).click();
+    await expect(strip.getByRole('tab', { name, exact: true })).toHaveAttribute('aria-selected', 'true');
+  }
+  expect(await overflow(page)).toEqual([]);
+  expect(errors).toEqual([]);
+});

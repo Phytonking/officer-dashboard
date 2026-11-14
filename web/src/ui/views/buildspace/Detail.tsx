@@ -8,9 +8,9 @@ import type {
   BuildspaceProject,
 } from "../../../lib/contracts";
 import { api } from "../../../lib/api/client";
-import { setParams } from "../../../lib/nav";
+import { pushEntry } from "./history";
 import { href } from "../../../lib/routes";
-import { fmtShort } from "../../../lib/format";
+import { fmtDate, fmtShort } from "../../../lib/format";
 import { Badge } from "../../components/kit";
 import { Empty, errorMessage, Notice } from "../../components/states";
 import {
@@ -86,7 +86,7 @@ export function BuildspaceDetail({
         </Badge>
         <button
           class="btn"
-          onClick={() => setParams({ edit: person ? "person" : "project" })}
+          onClick={() => pushEntry({ edit: person ? "person" : "project" })}
         >
           Edit {person ? "builder" : "project"}
         </button>
@@ -96,11 +96,11 @@ export function BuildspaceDetail({
           Building{" "}
           <button
             class="bs-title"
-            onClick={() => setParams({ person: null, project: project.id })}
+            onClick={() => pushEntry({ person: null, project: project.id })}
           >
             {project.name}
           </button>{" "}
-          · Joined {person.joinedOn}
+          · Joined {fmtDate(person.joinedOn)}
           {person.memberId && (
             <>
               {" "}

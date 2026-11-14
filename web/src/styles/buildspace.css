@@ -6,8 +6,6 @@
 .bs-intro,
 .bs-toolbar,
 .bs-result,
-.bs-card-top,
-.bs-card-signals,
 .bs-detail-meta,
 .bs-timeline-head,
 .bs-activity-meta {
@@ -151,69 +149,16 @@
 .bs-track[data-track^="Extended"]:before {
   background: var(--c-violet);
 }
-.bs-groups {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
-  gap: 24px;
-  align-items: start;
-}
-.bs-group {
-  min-width: 0;
-}
-.bs-group > h3 {
-  margin-top: 0;
-}
-.bs-group > h3,
 .bs-lane > h3 {
   font-size: 13px;
   display: flex;
   justify-content: space-between;
   gap: 12px;
 }
-.bs-group > h3 span,
 .bs-lane > h3 span {
   color: var(--muted);
   font-family: var(--mono);
   font-weight: 400;
-}
-.bs-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
-  gap: 16px;
-}
-.bs-card {
-  padding: 20px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-card);
-  background: var(--surface);
-  min-width: 0;
-}
-.bs-card h3 {
-  font-size: 19px;
-  margin: 16px 0 10px;
-  letter-spacing: -0.4px;
-}
-.bs-card p {
-  font-size: 13px;
-  color: var(--muted);
-  line-height: 1.65;
-  margin: 0 0 14px;
-}
-.bs-card .eyebrow {
-  font-size: 10px;
-}
-.bs-card-foot {
-  display: grid;
-  gap: 7px;
-  font-size: 11px;
-  margin-top: 22px;
-}
-.bs-card-signals {
-  font-size: 10px;
-  color: var(--muted);
-  border-top: 1px solid var(--line);
-  padding-top: 13px;
-  margin-top: 17px;
 }
 .bs-board {
   display: grid;
@@ -227,13 +172,6 @@
   background: var(--sunken);
   border-radius: var(--radius-card);
   align-self: start;
-}
-.bs-lane .bs-card {
-  margin-top: 12px;
-  padding: 16px;
-}
-.bs-lane .bs-card h3 {
-  font-size: 17px;
 }
 .bs-footnote {
   line-height: 1.6;
@@ -411,9 +349,6 @@
   .bs-filters label {
     flex-basis: calc(50% - 10px);
   }
-  .bs-cards {
-    grid-template-columns: 1fr;
-  }
   .bs-result {
     align-items: start;
   }
@@ -440,11 +375,6 @@
   }
 }
 
-.bs-card-foot strong {
-  color: var(--muted);
-  font-weight: 500;
-  margin-right: 4px;
-}
 .bs-activity-counts {
   display: inline-flex;
   gap: 10px;
@@ -519,3 +449,84 @@
   .bs-schedule-panel {position: static; width: auto; margin-top: 8px;}
 }
 .bs-toolbar .tab-count {margin-left: 6px;}
+
+/* ───────────── V0.11 cards in the officer card style (people.css) ─────────────
+   Groups use the People group heading (chevron, title, count); each card has the Home widget
+   radius, border and shadow, a band in the record's colour, an avatar, tinted chips and a few
+   signals with icons. Quick actions show on hover or focus (always on touch). */
+.bs-groups {display: grid; gap: 8px; min-width: 0;}
+.bs-group {min-width: 0;}
+.bs-group-head {padding: 4px 0 10px; margin-left: -6px;}
+.bs-group-head h3 {font-size: 13px; font-weight: 650; margin: 0;}
+.bs-group + .bs-group {padding-top: 12px; border-top: 1px solid var(--people-sep);}
+.bs-cards {display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 16px; align-items: stretch; padding-bottom: 8px;}
+.bs-cards[hidden] {display: none;}
+
+.bs-card {
+  position: relative; display: flex; flex-direction: column; gap: 12px; min-width: 0;
+  padding: 0 16px 16px; overflow: clip;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--block-radius, 16px);
+  box-shadow: var(--block-shadow);
+  transition: border-color var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
+}
+.bs-card.is-openable {cursor: pointer;}
+.bs-card:hover, .bs-card:focus-within {border-color: color-mix(in srgb, var(--control) 55%, var(--line)); box-shadow: 0 6px 18px -8px rgb(0 0 0 / .18), var(--block-shadow);}
+.bs-card-band {
+  display: block; height: 40px; margin: 0 -16px -28px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--hue) 24%, var(--surface)), color-mix(in srgb, var(--hue) 6%, var(--surface)));
+}
+.bs-card-id {position: relative; display: flex; align-items: flex-end; gap: 12px; min-width: 0; padding-right: 36px;}
+.bs-card-id .avatar, .bs-mark {
+  flex: none; width: 52px; height: 52px; font-size: 17px; border: 3px solid var(--surface); box-sizing: content-box; margin-left: -3px;
+}
+.bs-mark {display: inline-grid; place-items: center; border-radius: 14px; color: var(--hue); background: color-mix(in srgb, var(--hue) var(--tint), var(--surface));}
+.bs-card-name {display: flex; flex-direction: column; min-width: 0; padding-bottom: 2px;}
+.bs-card-name h3 {margin: 0; font-size: 15px; line-height: 1.3; letter-spacing: -0.2px; min-width: 0;}
+.bs-card-name .person-name {min-height: 0; padding: 0; font-weight: 650; white-space: normal; overflow-wrap: break-word;}
+.bs-card-name .person-sub {font-size: 12.5px;}
+.bs-card-desc {
+  margin: 0; font-size: 13px; line-height: 1.5; color: var(--muted);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.bs-card-chips {display: flex; flex-wrap: wrap; gap: 6px;}
+.bs-card-chips .people-chip {max-width: 100%; overflow: hidden; text-overflow: ellipsis;}
+/* A chip without its own hue stays neutral instead of inheriting the card band's colour. */
+.bs-card .people-chip:not([data-hue]) {--hue: var(--control);}
+
+.bs-signals {display: grid; gap: 8px; margin: 0; padding-top: 12px; border-top: 1px solid var(--people-sep); font-size: 13px;}
+.bs-signal {display: flex; align-items: flex-start; gap: 8px; min-width: 0;}
+.bs-signal dt {flex: none; display: inline-grid; place-items: center; width: 22px; height: 20px; color: var(--muted);}
+.bs-signal dd {margin: 0; min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; overflow-wrap: anywhere; line-height: 20px;}
+.bs-signal.is-alert dt, .bs-signal.is-alert dd {color: var(--attention);}
+.bs-signal-note {color: var(--muted);}
+.bs-signal-list {min-width: 0;}
+.bs-link {padding: 0; border: 0; background: none; font: inherit; color: var(--text); cursor: pointer; text-align: left;}
+.bs-link:hover {text-decoration: underline; text-underline-offset: 3px;}
+.bs-faces {display: inline-flex; flex: none;}
+.bs-faces .avatar {width: 22px; height: 22px; font-size: 9px; border: 2px solid var(--surface); box-sizing: content-box;}
+.bs-faces .avatar + .avatar, .bs-faces-more {margin-left: -6px;}
+.bs-faces-more {display: inline-grid; place-items: center; height: 22px; padding: 0 5px; border-radius: 999px; border: 2px solid var(--surface); background: var(--hover); font-size: 10px; font-weight: 600; color: var(--muted);}
+
+.bs-card-actions {position: absolute; top: 6px; right: 6px; z-index: 1;}
+.bs-card-actions .row-menu-btn {background: color-mix(in srgb, var(--surface) 72%, transparent); border-radius: 8px;}
+@media (hover: hover) and (pointer: fine) {
+  .bs-card-actions {opacity: 0; transition: opacity var(--dur-1) var(--ease-out);}
+  .bs-card:hover .bs-card-actions, .bs-card:focus-within .bs-card-actions, .bs-card-actions:has([aria-expanded="true"]) {opacity: 1;}
+}
+
+/* Board lanes: the same card, a little tighter. */
+.bs-lane > .bs-card {margin-top: 12px;}
+.bs-lane .bs-card {padding: 0 14px 14px;}
+.bs-lane .bs-card-band {margin: 0 -14px -24px;}
+.bs-lane .bs-card-id .avatar, .bs-lane .bs-mark {width: 40px; height: 40px; font-size: 14px; border-radius: 12px;}
+.bs-lane .bs-card-id {flex-direction: column; align-items: flex-start; gap: 8px; padding-right: 0;}
+.bs-lane .bs-card-desc {-webkit-line-clamp: 3;}
+
+@media (max-width: 600px) {
+  .bs-cards {grid-template-columns: minmax(0, 1fr); gap: 12px;}
+  .bs-card-name .person-name {min-height: 32px;}
+  .bs-link {min-height: 32px;}
+}
+@media (prefers-reduced-motion: reduce) {
+  .bs-card, .bs-card-actions {transition: none;}
+}
