@@ -1,4 +1,6 @@
 import { useLayoutEffect, useRef } from 'preact/hooks';
+import { Sapling } from '../brand/Sapling';
+import { saplingSvg } from '../brand/sapling';
 
 /**
  * The app shell's logo: the same `cseed-wordmark` images and `.wordmark-logo` classes as
@@ -9,7 +11,7 @@ import { useLayoutEffect, useRef } from 'preact/hooks';
  * Where it goes is measured, not hard-coded (V0.10, QA Q-1): the ghost is an invisible copy of
  * the shell's top bar and sidebar header with the same classes, laid out by the same CSS (the
  * breakpoints, the saved sidebar width, rail or wide). The visible logo copies whichever logo
- * the ghost shows (the wordmark, or the C mark on the rail) and its box. So the hand-off lines up
+ * the ghost shows (the wordmark, or the sapling mark on the rail) and its box. So the hand-off lines up
  * with the real shell at every width, even when the shell's CSS changes.
  */
 export function LogoImages() {
@@ -17,9 +19,9 @@ export function LogoImages() {
     <>
       <img class="wordmark-logo wordmark-logo--ink" src="/images/cseed-wordmark.png" alt="" width="78" height="18" />
       <img class="wordmark-logo wordmark-logo--white" src="/images/cseed-wordmark-white.png" alt="" width="78" height="18" />
-      {/* The rail (64px sidebar, the tablet default) shows only its C mark instead of the wordmark. */}
+      {/* The rail (64px sidebar, the tablet default) shows only its sapling mark instead of the wordmark. */}
       <span class="wordmark-mark" aria-hidden="true">
-        C
+        <Sapling />
       </span>
     </>
   );
@@ -35,7 +37,7 @@ const WORDMARK_IMGS =
   '<img class="wordmark-logo wordmark-logo--white" src="/images/cseed-wordmark-white.png" alt="" width="78" height="18">';
 const GHOST_HTML =
   `<div class="topbar"><span class="icon-btn"></span><span class="wordmark wordmark--top">${WORDMARK_IMGS}</span><span class="icon-btn"></span></div>` +
-  `<div class="sidebar"><span class="icon-btn sheet-close"></span><span class="wordmark"><span class="wordmark-mark">C</span>` +
+  `<div class="sidebar"><span class="icon-btn sheet-close"></span><span class="wordmark"><span class="wordmark-mark">${saplingSvg()}</span>` +
   `<span class="wordmark-text">${WORDMARK_IMGS}<span class="wordmark-sub">officers</span></span></span></div>`;
 
 function mountGhost(): HTMLDivElement {

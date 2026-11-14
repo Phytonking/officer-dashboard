@@ -403,7 +403,7 @@ body:has(dialog[open]){overflow:hidden}
 @media(max-width:640px){.dt-primary .linkish{min-height:44px;display:inline-flex;align-items:center}.dt .action-row .btn{min-height:44px}}
 @media(min-width:641px){.people-group .dt{table-layout:fixed}.people-group .dt th:first-child{width:46%}.people-group .dt th:nth-child(2){width:30%}}
 /* The shell's logo. ShellLogo (LogoMark.tsx) measures an invisible copy of the shell's header
-   (.onb-ghost, same classes, same CSS) and copies its box and kind (wordmark or C mark) inline;
+   (.onb-ghost, same classes, same CSS) and copies its box and kind (wordmark or sapling mark) inline;
    these rules are only the first-paint defaults until that runs. */
 .onb-logo-slot {display:block;width:0;height:18px;}
 .onb-ghost {position:fixed;inset:0;z-index:-1;opacity:0;pointer-events:none;overflow:hidden;contain:layout paint;}

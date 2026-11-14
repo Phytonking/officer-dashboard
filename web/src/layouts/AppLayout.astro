@@ -3,6 +3,7 @@
  * Every page: the pre-paint theme script, the Notion-style sidebar (icons-only on tablet,
  * a top bar + menu sheet on phone), the main column and the ⌘K command palette.
  */
+import { Sapling } from '../ui/brand/Sapling';
 import '../styles/tokens.css';
 import '../styles/base.css';
 import '../styles/components.css';
@@ -136,7 +137,7 @@ const NAVSCRIPT = `(function () {
               <Icon name="close" />
             </button>
             <a class="wordmark" href="/" aria-label="CSEED officers, home">
-              <span class="wordmark-mark" aria-hidden="true">C</span>
+              <span class="wordmark-mark" aria-hidden="true"><Sapling /></span>
               <span class="wordmark-text">
                 <img class="wordmark-logo wordmark-logo--ink" src="/images/cseed-wordmark.png" alt="" width="78" height="18" />
                 <img class="wordmark-logo wordmark-logo--white" src="/images/cseed-wordmark-white.png" alt="" width="78" height="18" />

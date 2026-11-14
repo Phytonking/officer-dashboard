@@ -1,3 +1,4 @@
+import { Sapling } from '../../brand/Sapling';
 import { useEffect, useState } from 'preact/hooks';
 import type { ClubSettings } from '../../../lib/contracts';
 import { api } from '../../../lib/api/client';
@@ -30,7 +31,7 @@ export default function LinksWidget({ me, size }: WidgetProps) {
     return <ul class={`links links--${layout} club-links`}>
       {links.map(([chip, label, url]) => <li key={label}>
         <a class={`link-row${url ? '' : ' link-unset'}`} href={url || '/settings#club-links'} {...(url ? { target: '_blank', rel: 'noopener noreferrer' } : {})}>
-          <span class="link-chip" aria-hidden="true">{chip}</span>
+          <span class="link-chip" aria-hidden="true">{chip === 'C' ? <Sapling /> : chip}</span>
           <span class="row-main"><span class="row-title">{label}{url && <span class="visually-hidden"> (opens in a new tab)</span>}</span>
             {layout !== 'row' && <span class="row-meta">{url ? domain(url) : layout === 'grid' ? 'Not set · add in Settings' : 'Add link'}</span>}</span>
         </a>

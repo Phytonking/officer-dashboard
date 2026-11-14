@@ -12,6 +12,9 @@ a.link-row:focus-visible {outline: 2px solid var(--c-blue); outline-offset: -2px
 .links .row-main {width: 100%;}
 .link-chip {flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--surface); border: 1px solid var(--line); color: var(--text); font-weight: 600; font-size: 12px;}
 .link-unset, .link-unset .link-chip {color: var(--muted);}
+/* The club website gets the cseed sapling instead of a letter. */
+.link-chip .sapling {display: block; width: 20px; height: 20px;}
+.link-unset .link-chip .sapling {opacity: .55;}
 /* A 1×2 tile laid out as 2×1 (middle widths): rows become the small-tile row. */
 @container wc (max-height: 120px) {
   .links--list {grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0;}
