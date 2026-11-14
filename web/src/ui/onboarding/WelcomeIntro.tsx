@@ -275,6 +275,14 @@ export function WelcomeIntro({ onDone, targetSelector = '[data-onb-logo]', media
     const word = document.createElement('div');
     word.className = 'wi-word';
     sn.appendChild(word);
+    // The snake is drawn in the wordmark's own ink (fixed, both themes) while the light photo card
+    // is behind it. A copy of the written word in the theme's text colour sits on top, filled in
+    // once the word is written, and fades in over the shrink, so in dark mode the word arrives on
+    // the dark shell as light ink, the same as the white wordmark that takes over (opacity only).
+    const themed = document.createElement('div');
+    themed.className = 'wi-word wi-word--themed';
+    themed.setAttribute('data-wi-word-themed', '');
+    sn.appendChild(themed);
     const max = plan.ticks[plan.ticks.length - 1]!.len;
     const segs: HTMLElement[] = [];
     for (let i = 0; i < max; i++) {
@@ -345,6 +353,12 @@ export function WelcomeIntro({ onDone, targetSelector = '[data-onb-logo]', media
         // Scale after the cell's own translate, so each cell grows about its own centre.
         const at = el.style.transform;
         run(el, [{ transform: `${at} scale(1)` }, { transform: `${at} scale(${grow.toFixed(3)})` }], { duration: 260, easing: EASE, fill: 'forwards' });
+        const copy = document.createElement('div');
+        copy.className = 'wi-seg';
+        copy.style.cssText = el.style.cssText;
+        copy.style.opacity = '1';
+        copy.style.transform = `${at} scale(${grow.toFixed(3)})`;
+        themed.appendChild(copy);
       });
       segs[0]!.querySelectorAll('.wi-eye').forEach((e) => run(e, [{ opacity: 0 }], { duration: 160, fill: 'forwards' }));
       go('spelled');
@@ -376,6 +390,8 @@ export function WelcomeIntro({ onDone, targetSelector = '[data-onb-logo]', media
     const { tx, ty, s } = plan.morph;
     run(bd, [{ opacity: 0 }], { delay: plan.morphAt - 300, duration: 300, fill: 'forwards' });
     run(sn, [{ transform: 'translate(0, 0) scale(1)' }, { transform: `translate(${tx.toFixed(2)}px, ${ty.toFixed(2)}px) scale(${s.toFixed(5)})` }], { delay: plan.morphAt, duration: plan.morphEnd - plan.morphAt, easing: 'cubic-bezier(.65, 0, .25, 1)' });
+    // (On the rail the word fades out instead, so the themed copy never shows.)
+    if (box.kind !== 'mark') run(themed, [{ opacity: 0 }, { opacity: 1 }], { delay: plan.morphAt, duration: plan.morphEnd - plan.morphAt, easing: 'cubic-bezier(.65, 0, .25, 1)' });
     if (box.kind === 'mark') run(word, [{ opacity: 1 }, { opacity: 0 }], { delay: plan.morphAt, duration: (plan.morphEnd - plan.morphAt) * 0.6, easing: 'ease-in' });
     run(sn, [{ opacity: 1 }, { opacity: 0 }], { delay: plan.morphEnd - 100, duration: 140 });
     run(logo.current!, [{ opacity: 0, transform: 'scale(.85)' }, { opacity: 1, transform: 'scale(1)' }], { delay: plan.morphEnd - 160, duration: 220, easing: EASE });

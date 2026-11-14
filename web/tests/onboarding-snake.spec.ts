@@ -81,6 +81,14 @@ for (const [vw, vh] of VIEWPORTS) {
     expect(p.logo.y).toBeGreaterThan(0);
     expect(p.logo.y + p.logo.h).toBeLessThan(vh);
     expect(p.sprout.x + p.sprout.size).toBeLessThanOrEqual(vw - 8);
+    // Review F-2: on a phone the wordmark stays inside the photo card (inset 16px).
+    if (vw < 600) {
+      expect(p.logo.x).toBeGreaterThanOrEqual(16);
+      expect(p.logo.x + p.logo.w).toBeLessThanOrEqual(vw - 16);
+    }
+    // Review F-3: the word sits above the middle (on the calm top of the photo), lane kept above it.
+    expect(p.word.y + p.word.h / 2).toBeLessThan(vh / 2);
+    expect(p.gy0).toBeGreaterThanOrEqual(4);
   });
 
   test(`${vw}×${vh}: classic arcade movement and growth`, () => {
@@ -126,7 +134,7 @@ for (const [vw, vh] of VIEWPORTS) {
   test(`${vw}×${vh}: thick cells, a deliberate approach, and the wordmark shrinks exactly onto the logo`, () => {
     const p = plan(vw, vh);
     expect(p.C).toBe(cellSize(vw));
-    expect(p.C).toBeGreaterThanOrEqual(10);
+    expect(p.C).toBeGreaterThanOrEqual(9);
     expect(p.word.w).toBe(WORD_COLS * p.C);
     // V0.11: visibly slower on the way to the seeds than while writing; lifts pass in a blink.
     expect(p.stepApproach).toBeGreaterThanOrEqual(44);

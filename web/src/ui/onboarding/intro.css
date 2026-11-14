@@ -23,10 +23,13 @@
 .wi-board {opacity:0;background-image:radial-gradient(circle, var(--line) 1.3px, transparent 1.7px);background-size:var(--wi-c, 32px) var(--wi-c, 32px);}
 .wi-snake, .wi-word {transform-origin:0 0;will-change:transform, opacity;}
 .wi-word {position:absolute;inset:0;}
-.wi-seg {position:absolute;left:0;top:0;background:var(--text);border-radius:var(--wi-r, 3px);opacity:0;will-change:transform;}
+.wi {--wi-ink:#1d1d1b;} /* the wordmark image's ink: the snake's colour over the light photo card, in both themes */
+.wi-seg {position:absolute;left:0;top:0;background:var(--wi-ink);border-radius:var(--wi-r, 3px);opacity:0;will-change:transform;}
 .wi-seg--head {z-index:2;}
 /* Once "cseed" is written, WelcomeIntro squares the letter cells and rounds the outer corner where a stroke turns. */
-.wi-eye {position:absolute;right:18%;width:20%;height:20%;background:var(--bg);border-radius:1px;}
+.wi-word--themed {opacity:0;}
+.wi-word--themed .wi-seg {background:var(--text);}
+.wi-eye {position:absolute;right:18%;width:20%;height:20%;background:#fff;border-radius:1px;}
 .wi-eye--l {top:18%;}
 .wi-eye--r {bottom:18%;}
 /* Seeds: small sapling-green ovals laid along the letters. */

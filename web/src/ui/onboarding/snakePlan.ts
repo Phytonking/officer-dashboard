@@ -221,10 +221,12 @@ export const STEP_LIFT = 9;
 export const WRAP_HOLD = 360;
 export const SPELL_HOLD = 1000;
 export const MORPH_MS = 640;
+/** How far above the middle the word sits, as a share of the viewport height. */
+export const RAISE = 0.09;
 
-/** Cell size: the wordmark (word + sapling) takes about 70% of a wide screen and the full width (less a 12px gutter each side) on a phone. */
+/** Cell size: the wordmark (word + sapling) takes about 70% of a wide screen and, on a phone, the photo card's width (inset 16px each side) less 4px. */
 export function cellSize(vw: number): number {
-  return clamp(Math.floor((vw < 600 ? vw - 24 : Math.min(vw * 0.7, 1120)) / LOGO.w), 10, 34);
+  return clamp(Math.floor((vw < 600 ? vw - 40 : Math.min(vw * 0.7, 1120)) / LOGO.w), 9, 34);
 }
 
 export function buildPlan(input: PlanInput): Plan {
@@ -234,9 +236,11 @@ export function buildPlan(input: PlanInput): Plan {
   const rows = Math.ceil(vh / C) + 1;
   const ox = (vw - cols * C) / 2;
   const oy = (vh - rows * C) / 2;
-  // Centre the whole wordmark (word + sapling), keeping a lane of 3 rows above the word for the approach.
+  // Centre the whole wordmark (word + sapling) across, and set it a little above the middle
+  // (about 9% of the height) so it sits on the calm top of the photo card rather than on the
+  // row of faces; always keep a lane of 3 rows above the word for the approach.
   const gx0 = Math.floor((cols - LOGO.w) / 2);
-  const gy0 = Math.max(4, Math.floor((rows - WORD_ROWS) / 2));
+  const gy0 = Math.max(4, Math.floor((rows - WORD_ROWS) / 2) - Math.round((vh * RAISE) / C));
   const L0 = START_LENGTH;
 
   /* ── Route ── */

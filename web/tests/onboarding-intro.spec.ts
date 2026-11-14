@@ -280,6 +280,48 @@ test('dark theme: the intro uses the dark tokens', async ({ page }) => {
   expect(c.type).toBe('rgb(238, 239, 235)');
 });
 
+test('dark theme: the snake writes in the wordmark ink over the light photo, then turns to the theme ink as it shrinks', async ({ page }) => {
+  // Review F-1: light --text on the light photo card washed out. While the photo shows, the
+  // snake is the wordmark image's dark ink; a copy in --text fades in over the shrink.
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await openIntro(page);
+  await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
+  await overlay(page).click({ position: { x: 200, y: 300 } });
+  await expect(overlay(page)).toHaveAttribute('data-state', 'spelled', { timeout: 30_000 });
+  const r = await page.evaluate(() => {
+    document.getAnimations().forEach((a) => a.pause());
+    const seg = document.querySelector('[data-wi-snake][data-kind="letter"]')!;
+    const themed = document.querySelector('[data-wi-word-themed]')!;
+    const lum = (c: string) => {
+      const [r, g, b] = c.match(/\d+(\.\d+)?/g)!.map(Number).map((v) => v / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+      return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
+    };
+    const ink = getComputedStyle(seg).backgroundColor;
+    const out = {
+      ink,
+      inkLum: lum(ink),
+      photo: +getComputedStyle(document.querySelector('.wi-photo')!).opacity,
+      themedCells: themed.children.length,
+      themedInk: getComputedStyle(themed.firstElementChild!).backgroundColor,
+      themedOpacity: +getComputedStyle(themed).opacity,
+      kind: (document.querySelector('[data-wi-logo]') as HTMLElement).dataset.kind,
+      // The opacity the themed copy reaches when the shrink ends.
+      themedEnd: (themed.getAnimations().map((a) => (a.effect as KeyframeEffect).getKeyframes()).at(-1)?.at(-1)?.opacity),
+    };
+    document.getAnimations().forEach((a) => a.play());
+    return out;
+  });
+  expect(r.photo).toBeGreaterThan(0.95);
+  expect(r.ink).toBe('rgb(29, 29, 27)'); // the wordmark's ink, not the dark theme's light --text
+  expect(r.inkLum).toBeLessThan(0.05); // dark ink: well over 4.5:1 on the beige placeholder
+  expect(r.themedCells).toBe(70);
+  expect(r.themedInk).toBe('rgb(238, 239, 235)');
+  expect(r.themedOpacity).toBe(0);
+  // Onto the wordmark the theme-ink copy fades in; onto the rail's sapling mark the word fades out instead.
+  expect(String(r.themedEnd)).toBe(r.kind === 'mark' ? 'undefined' : '1');
+  await expect(overlay(page)).toHaveCount(0, { timeout: 20_000 });
+});
+
 // QA Q-1: the logo hand-off lines up with the real shell at the tablet edges and on phones.
 for (const [w, h] of [[820, 1180], [900, 1180], [1099, 900], [1100, 900], [390, 844]] as const) {
   test(`${w}px: the intro logo lands exactly on the shell logo`, async ({ page }, info) => {
