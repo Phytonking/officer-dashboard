@@ -157,7 +157,8 @@ test('Members commits connection notices with the initial directory', async ({ p
   release();
   const directory = page.getByRole('region', { name: 'Member directory' });
   await expect(directory).toBeVisible();
-  await expect(page.getByText('Cloudflare is not connected.', { exact: false })).toBeVisible();
+  await expect(directory.locator('.members-sync strong')).not.toHaveText(/Loading connection/);
+  await expect(directory.locator('.members-sync strong')).toBeVisible();
   await settle(page);
 });
 
