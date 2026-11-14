@@ -7,7 +7,7 @@ import {
   type BuildspaceProject,
 } from "../../lib/contracts";
 import { useApi } from "../../lib/api/useApi";
-import { fmtShort } from "../../lib/format";
+import { fmtDate, fmtShort } from "../../lib/format";
 import { setParams, useSearch } from "../../lib/nav";
 import { Async, Empty, Notice } from "../components/states";
 import { Badge, Tabs } from "../components/kit";
@@ -20,6 +20,8 @@ import type { CurrentUser } from "../../lib/contracts";
 import { ScheduleMenu } from "./buildspace/Schedule";
 import { BuildspaceDetail } from "./buildspace/Detail";
 import { ProjectForm, PersonForm } from "./buildspace/Forms";
+import { CardGroup, MentorCard, PersonCard, ProjectCard, TRACK_HUE, STAGE_HUE, checkIn, openForm, leaveForm } from "./buildspace/Cards";
+import { PeopleChip } from "../components/PeopleTable";
 import {
   missed,
   openActivity,
@@ -48,12 +50,12 @@ export default function BuildspaceView({ me }: { me: CurrentUser }) {
               setNotice("Check-in schedule saved.");
             }}
           />
-          <button class="btn" onClick={() => setParams({ new: "person" })}>
+          <button class="btn" onClick={() => openForm({ new: "person" })}>
             Add builder
           </button>
           <button
             class="btn btn--primary"
-            onClick={() => setParams({ new: "project" })}
+            onClick={() => openForm({ new: "project" })}
           >
             New project
           </button>
@@ -171,8 +173,9 @@ function BuildspaceContent({
   });
   const detailPerson = b.people.find((p) => p.id === qs.get("person"));
   const detailProject = b.projects.find((p) => p.id === qs.get("project"));
+  // Closing replaces the entry, so Back never lands on a form that was closed or saved (R-4).
   const close = () =>
-    setParams({ person: null, project: null, new: null, edit: null });
+    setParams({ person: null, project: null, new: null, edit: null }, { replace: true });
   const saved = () => {
     reload();
     close();
@@ -266,37 +269,7 @@ function BuildspaceContent({
     );
   };
   const card = (p: BuildspaceProject, scope = "") => (
-    <article
-      class="bs-card"
-      key={p.id}
-      data-flip={scope + p.id}
-      data-track={p.track}
-    >
-      <div class="bs-card-top">
-        <span class="eyebrow">{trackShort(p.track)}</span>
-        {stageBadge(p)}
-      </div>
-      <h3>{projectLink(p)}</h3>
-      <p>{p.description}</p>
-      <div class="bs-card-foot">
-        <span>
-          <strong>Builders</strong>{" "}
-          {projectPeople(p, b)
-            .map((x) => x.name)
-            .join(" · ") || "No builders yet"}
-        </span>
-        <span class={!p.mentorIds.length ? "bs-alert" : ""}>
-          <strong>Mentors</strong> {mentorNames(p)}
-        </span>
-      </div>
-      <div class="bs-card-signals">
-        <span>
-          {projectPeople(p, b).filter((x) => missed(x, b)).length} awaiting
-          check-in
-        </span>
-        <span>{requestCount(p.id)}</span>
-      </div>
-    </article>
+    <ProjectCard key={p.id} p={p} b={b} scope={scope} onPerson={personDrawer.open} />
   );
   const groups =
     group === "mentor"
@@ -513,95 +486,35 @@ function BuildspaceContent({
                 )
                   return null;
                 return (
-                  <section class="bs-group" key={g.id}>
-                    <h3>
-                      {g.label}
-                      <span>
-                        {tab === "people"
-                          ? pe.length
-                          : tab === "projects"
-                            ? ps.length
-                            : ms.length}
-                      </span>
-                    </h3>
-                    <div class="bs-cards motion-list">
-                      {tab === "projects"
-                        ? ps.map((p) => card(p, g.id + ":"))
-                        : tab === "people"
-                          ? pe.map((p) => (
-                              <article
-                                class="bs-card"
-                                key={p.id}
-                                data-flip={g.id + ":" + p.id}
-                              >
-                                <span class="eyebrow">
-                                  {trackShort(project(p.projectId).track)}
-                                </span>
-                                <h3>
-                                  <button
-                                    class="bs-title"
-                                    onClick={() => personDrawer.open(p.id)}
-                                  >
-                                    {p.name}
-                                  </button>
-                                </h3>
-                                <p>
-                                  <strong>Project</strong>{" "}
-                                  {project(p.projectId).name}
-                                </p>
-                                <p>
-                                  <strong>Mentors</strong>{" "}
-                                  {mentorNames(project(p.projectId))}
-                                </p>
-                                {weekBadge(p)}
-                              </article>
-                            ))
-                          : ms.map((m) => (
-                              <article
-                                class="bs-card"
-                                key={m.id}
-                                data-flip={g.id + ":" + m.id}
-                              >
-                                <h3>{m.name}</h3>
-                                <p>{m.org}</p>
-                                {ps
-                                  .filter((p) => p.mentorIds.includes(m.id))
-                                  .map(projectLink)}
-                              </article>
-                            ))}
-                    </div>
-                  </section>
+                  <CardGroup
+                    key={g.id}
+                    id={g.id}
+                    title={g.label}
+                    count={tab === "people" ? pe.length : tab === "projects" ? ps.length : ms.length}
+                  >
+                    {tab === "projects"
+                      ? ps.map((p) => card(p, g.id + ":"))
+                      : tab === "people"
+                        ? pe.map((p) => (
+                            <PersonCard key={p.id} p={p} b={b} scope={g.id + ":"} onPerson={personDrawer.open} />
+                          ))
+                        : ms.map((m) => (
+                            <MentorCard key={m.id} m={m} b={b} scope={g.id + ":"} projects={ps.filter((p) => p.mentorIds.includes(m.id))} />
+                          ))}
+                  </CardGroup>
                 );
               })}
               {tab === "mentors" &&
                 mentors.some(
                   (m) => !b.projects.some((p) => p.mentorIds.includes(m.id)),
                 ) && (
-                  <section class="bs-group" key="unassigned">
-                    <h3>No projects assigned</h3>
-                    <div class="bs-cards motion-list">
-                      {mentors
-                        .filter(
-                          (m) =>
-                            !b.projects.some((p) => p.mentorIds.includes(m.id)),
-                        )
-                        .map((m) => (
-                          <article
-                            class="bs-card"
-                            key={m.id}
-                            data-flip={"unassigned:" + m.id}
-                          >
-                            <h3>{m.name}</h3>
-                            <p>{m.org}</p>
-                            <a
-                              href={`/contacts?id=${encodeURIComponent(m.id)}`}
-                            >
-                              Open mentor contact →
-                            </a>
-                          </article>
-                        ))}
-                    </div>
-                  </section>
+                  <CardGroup key="unassigned" id="unassigned" title="No projects assigned" count={mentors.filter((m) => !b.projects.some((p) => p.mentorIds.includes(m.id))).length}>
+                    {mentors
+                      .filter((m) => !b.projects.some((p) => p.mentorIds.includes(m.id)))
+                      .map((m) => (
+                        <MentorCard key={m.id} m={m} b={b} scope="unassigned:" projects={[]} />
+                      ))}
+                  </CardGroup>
                 )}
             </div>
           ) : (
@@ -764,11 +677,18 @@ function BuildspaceContent({
         eyebrow={detailPerson ? "Buildspace + Launchpad builder" : undefined}
         subtitle={detailPerson ? <button class="bs-title" onClick={() => setParams({ person: null, project: detailPerson.projectId })}>{project(detailPerson.projectId).name}</button> : undefined}
         actions={detailPerson ? [
-          { label: "Edit builder", icon: "pen", onClick: () => setParams({ edit: "person" }) },
+          { label: "Edit builder", icon: "pen", onClick: () => openForm({ edit: "person" }) },
           ...(detailPerson.memberId ? [{ label: "Member record", icon: "user", href: `/members?person=${encodeURIComponent(detailPerson.memberId)}` }] : []),
         ] : []}
-        stats={detailPerson ? [{ label: "Joined", value: detailPerson.joinedOn }] : []}
-        chips={detailPerson ? <><Badge tone="info">{project(detailPerson.projectId).track}</Badge> {stageBadge(project(detailPerson.projectId))} {weekBadge(detailPerson)}</> : undefined}
+        stats={detailPerson ? [{ label: "Joined", value: <time dateTime={detailPerson.joinedOn}>{fmtDate(detailPerson.joinedOn)}</time> }] : []}
+        chips={detailPerson ? (() => {
+          const pr = project(detailPerson.projectId), week = checkIn(detailPerson, b);
+          return <>
+            <PeopleChip hue={TRACK_HUE[pr.track]}>{pr.track}</PeopleChip>
+            <PeopleChip hue={STAGE_HUE[pr.stage]}>{pr.stage}</PeopleChip>
+            <PeopleChip hue={week.hue} data={{ "data-checkin": week.missed ? "missed" : "done" }}>{week.label}</PeopleChip>
+          </>;
+        })() : undefined}
         tabs={["overview", "timeline", "requests", "purchases", "absences", "add entry"].map((section) => ({
           key: section, label: section[0]!.toUpperCase() + section.slice(1), render: () => detailPerson ? (
             <BuildspaceDetail
@@ -790,7 +710,10 @@ function BuildspaceContent({
         onClose={() => {
           const current = new URLSearchParams(location.search);
           if (current.has("person") && !current.has("edit") && !current.has("new")) return;
-          if (current.has("edit") && current.has("person")) setParams({ edit: null });
+          // Leaving a builder form steps back to the profile it came from; a new record or a
+          // project edit closes. Either way the form's own history entry is dropped (R-4).
+          if (current.has("edit") && current.has("person")) leaveForm({ edit: null });
+          else if (current.has("new")) leaveForm({ new: null });
           else close();
         }}
         id="buildspace-detail"

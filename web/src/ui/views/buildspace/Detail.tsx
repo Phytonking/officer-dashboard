@@ -9,8 +9,9 @@ import type {
 } from "../../../lib/contracts";
 import { api } from "../../../lib/api/client";
 import { setParams } from "../../../lib/nav";
+import { openForm } from "./Cards";
 import { href } from "../../../lib/routes";
-import { fmtShort } from "../../../lib/format";
+import { fmtDate, fmtShort } from "../../../lib/format";
 import { Badge } from "../../components/kit";
 import { Empty, errorMessage, Notice } from "../../components/states";
 import {
@@ -86,7 +87,7 @@ export function BuildspaceDetail({
         </Badge>
         <button
           class="btn"
-          onClick={() => setParams({ edit: person ? "person" : "project" })}
+          onClick={() => openForm({ edit: person ? "person" : "project" })}
         >
           Edit {person ? "builder" : "project"}
         </button>
@@ -100,7 +101,7 @@ export function BuildspaceDetail({
           >
             {project.name}
           </button>{" "}
-          · Joined {person.joinedOn}
+          · Joined {fmtDate(person.joinedOn)}
           {person.memberId && (
             <>
               {" "}
