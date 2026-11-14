@@ -3,7 +3,7 @@ import { devLoginSkipTour, watchErrors } from './helpers';
 
 /**
  * V0.10 sidebar People folder: order, open/closed remembered across reloads, the icons-only
- * flyout (keyboard) and the phone menu sheet.
+ * inline rail (keyboard, R-2) and the phone menu sheet.
  */
 const toggle = (page: Page) => page.locator('#nav-people-toggle');
 const panel = (page: Page) => page.locator('#nav-people-panel');
@@ -70,7 +70,7 @@ test.describe('sidebar People folder', () => {
   });
 
   test('a collapsed folder auto-expands on one of its pages and marks the page current', async ({ page }, info) => {
-    test.skip(info.project.name === 'tablet', 'rail flyout is covered below');
+    test.skip(info.project.name === 'tablet', 'rail is covered below');
     await page.evaluate(() => localStorage.setItem('cseed-people', '0'));
     await page.goto('/members');
     if (info.project.name === 'phone') await openMenu(page);
@@ -89,72 +89,103 @@ test.describe('sidebar People folder', () => {
     else await expect(page.locator('[data-tour="sidebar-resize"]')).toBeVisible();
   });
 
-  test('icons-only rail: one icon, flyout with keyboard support', async ({ page }, info) => {
+  test('icons-only rail: the three pages stack inline under the People icon', async ({ page }, info) => {
     test.skip(info.project.name === 'phone', 'no rail on phones');
     await reset(page);
     await setRail(page);
     await expect(page.locator('#sidebar .nav-label').first()).toBeHidden();
     await expect(toggle(page)).toBeVisible();
-    await expect(panel(page)).toBeHidden();
-    await expect(toggle(page)).toHaveAttribute('aria-expanded', 'false');
-    await expect(toggle(page)).toHaveAttribute('aria-controls', 'nav-people-panel');
-
-    // Keyboard: ArrowDown opens and focuses the first page; arrows move; Esc closes and restores focus.
-    await toggle(page).focus();
-    await page.keyboard.press('ArrowDown');
-    await expect(panel(page)).toBeVisible();
     await expect(toggle(page)).toHaveAttribute('aria-expanded', 'true');
-    await expect(panel(page).locator('a').first()).toBeFocused();
-    await page.keyboard.press('ArrowDown');
-    await expect(panel(page).locator('a').nth(1)).toBeFocused();
-    await page.keyboard.press('ArrowUp');
-    await page.keyboard.press('ArrowUp'); // wraps to the last
-    await expect(panel(page).locator('a').nth(2)).toBeFocused();
-    await page.keyboard.press('Escape');
-    await expect(panel(page)).toBeHidden();
-    await expect(toggle(page)).toBeFocused();
+    await expect(toggle(page)).toHaveAttribute('aria-controls', 'nav-people-panel');
+    const sb = (await page.locator('#sidebar').boundingBox())!;
+    const t = (await toggle(page).boundingBox())!;
+    const subs = panel(page).locator('a');
+    await expect(subs).toHaveCount(3);
+    let prev = t.y;
+    for (let i = 0; i < 3; i++) {
+      await expect(subs.nth(i)).toBeVisible();
+      const b = (await subs.nth(i).boundingBox())!;
+      expect(b.x).toBeGreaterThanOrEqual(sb.x);
+      expect(b.x + b.width).toBeLessThanOrEqual(sb.x + sb.width); // inside the rail, no flyout
+      expect(b.y).toBeGreaterThan(prev);
+      prev = b.y;
+      expect(await subs.nth(i).getAttribute('title')).toBeTruthy();
+    }
+    // Click collapses inline, click again expands; nothing moves sideways.
+    await toggle(page).click();
     await expect(toggle(page)).toHaveAttribute('aria-expanded', 'false');
-
-    // Click opens, a second click closes, a link navigates.
+    await expect(subs.first()).toBeHidden();
     await toggle(page).click();
-    await expect(panel(page)).toBeVisible();
-    const box = (await panel(page).boundingBox())!;
-    expect(box.x).toBeGreaterThanOrEqual(60); // beside the rail, not inside it
-    await toggle(page).click();
-    await expect(panel(page)).toBeHidden();
-    await toggle(page).click();
-    await panel(page).getByRole('link', { name: 'External Contacts' }).click();
+    await expect(subs.first()).toBeVisible();
+    await subs.nth(2).click();
     await expect(page).toHaveURL(/\/contacts/);
-    // On one of its pages the rail icon shows as current.
     await expect(page.locator('.nav-folder')).toHaveAttribute('data-current', '');
   });
 
-  test('a folder collapsed on the wide sidebar still opens its flyout in the rail', async ({ page }, info) => {
-    test.skip(info.project.name === 'phone', 'no rail on phones');
+  test('R-2: Tab then Enter on People opens (never closes) it; keys keep focus', async ({ page }, info) => {
+    test.skip(info.project.name === 'phone', 'no keyboard rail on phones');
     await page.evaluate(() => localStorage.setItem('cseed-people', '0'));
     await page.goto('/events');
     await setRail(page);
     await expect(toggle(page)).toHaveAttribute('aria-expanded', 'false');
-    await toggle(page).focus();
-    await page.keyboard.press('ArrowDown');
-    await expect(toggle(page)).toHaveAttribute('aria-expanded', 'true');
-    await expect(panel(page)).toBeVisible();
-    await expect(panel(page).locator('a').first()).toBeFocused();
-    expect(await panel(page).evaluate((e) => getComputedStyle(e).visibility)).toBe('visible');
-    await page.keyboard.press('Escape');
-    await expect(panel(page)).toBeHidden();
+    // Tab to the button by keyboard (focus-visible), then Enter.
+    await page.locator('a[data-nav="design"]').focus();
+    await page.keyboard.press('Tab');
     await expect(toggle(page)).toBeFocused();
-    // Still collapsed (saved) on the wide sidebar, then shrink to the rail in the same document.
-    if (info.project.name === 'desktop') {
-      await page.request.put('/api/me/prefs', { data: { sidebarWidth: 0 } });
-      await page.evaluate(() => { localStorage.removeItem('cseed-sidebar'); });
-      await page.reload();
+    await expect(toggle(page)).toHaveAttribute('aria-expanded', 'false'); // focus alone changes nothing
+    await page.keyboard.press('Enter');
+    await expect(toggle(page)).toHaveAttribute('aria-expanded', 'true');
+    await expect(panel(page).locator('a').first()).toBeVisible();
+    await expect(toggle(page)).toBeFocused();
+    await page.keyboard.press('Space');
+    await expect(toggle(page)).toHaveAttribute('aria-expanded', 'false');
+    await page.keyboard.press('Enter');
+    await expect(toggle(page)).toHaveAttribute('aria-expanded', 'true');
+    // Arrows: Down enters the group, moves, Up returns, Left collapses and keeps focus on the button.
+    await page.keyboard.press('ArrowDown');
+    await expect(panel(page).locator('a').first()).toBeFocused();
+    await page.keyboard.press('ArrowDown');
+    await expect(panel(page).locator('a').nth(1)).toBeFocused();
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('ArrowUp');
+    await expect(toggle(page)).toBeFocused();
+    await page.keyboard.press('ArrowLeft');
+    await expect(toggle(page)).toHaveAttribute('aria-expanded', 'false');
+    await expect(toggle(page)).toBeFocused();
+  });
+
+  test('resizing the sidebar keeps the folder inline and its state', async ({ page }, info) => {
+    test.skip(info.project.name !== 'desktop', 'sidebar is resizable on desktop');
+    await reset(page);
+    await toggle(page).click(); // collapse on the wide sidebar
+    await expect(toggle(page)).toHaveAttribute('aria-expanded', 'false');
+    for (const w of [64, 240, 320, 64]) {
+      await page.evaluate((px) => {
+        document.documentElement.dataset.sidebar = px <= 64 ? 'rail' : 'wide';
+        document.documentElement.style.setProperty('--sidebar', px + 'px');
+        window.dispatchEvent(new Event('cseed-sidebar'));
+      }, w);
       await expect(toggle(page)).toHaveAttribute('aria-expanded', 'false');
-      await page.evaluate(() => { document.documentElement.dataset.sidebar = 'rail'; document.documentElement.style.setProperty('--sidebar', '64px'); window.dispatchEvent(new Event('cseed-sidebar')); });
-      await toggle(page).click();
-      await expect(panel(page)).toBeVisible();
-      await expect(panel(page).getByRole('link', { name: 'Members' })).toBeVisible();
+      await expect(panel(page).locator('a').first()).toBeHidden();
     }
+    await toggle(page).click();
+    await expect(toggle(page)).toHaveAttribute('aria-expanded', 'true');
+    const sb = (await page.locator('#sidebar').boundingBox())!;
+    for (const w of [240, 64, 320]) {
+      await page.evaluate((px) => {
+        document.documentElement.dataset.sidebar = px <= 64 ? 'rail' : 'wide';
+        document.documentElement.style.setProperty('--sidebar', px + 'px');
+        window.dispatchEvent(new Event('cseed-sidebar'));
+      }, w);
+      const links = panel(page).locator('a');
+      await expect(links.first()).toBeVisible();
+      const s = (await page.locator('#sidebar').boundingBox())!;
+      for (let i = 0; i < 3; i++) {
+        const b = (await links.nth(i).boundingBox())!;
+        expect(b.x + b.width).toBeLessThanOrEqual(s.x + s.width + 0.5);
+      }
+    }
+    expect(sb.width).toBeGreaterThan(0);
   });
 
   test('phone menu sheet: expandable group', async ({ page }, info) => {

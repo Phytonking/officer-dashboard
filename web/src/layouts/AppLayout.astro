@@ -160,8 +160,8 @@ const NAVSCRIPT = `(function () {
                 ))
               }
               <li class="nav-folder" data-nav-folder data-current={peopleCurrent ? '' : undefined}>
-                <button type="button" class="nav-link nav-folder-toggle" id="nav-people-toggle" aria-expanded="true" aria-controls="nav-people-panel" aria-haspopup="true" title="People" data-nav="people">
-                  <Icon name="folder-user" />
+                <button type="button" class="nav-link nav-folder-toggle" id="nav-people-toggle" aria-expanded="true" aria-controls="nav-people-panel" title="People" data-nav="people">
+                  <Icon name="user" />
                   <span class="nav-label">People</span>
                   <span class="nav-chevron" aria-hidden="true"><Icon name="chevron-down" size={14} /></span>
                 </button>
@@ -170,7 +170,7 @@ const NAVSCRIPT = `(function () {
                     {
                       PEOPLE.map((n) => (
                         <li>
-                          <a class="nav-link nav-link--sub" href={n.href} aria-current={page === n.key ? 'page' : undefined} data-nav={n.key}>
+                          <a class="nav-link nav-link--sub" href={n.href} aria-current={page === n.key ? 'page' : undefined} title={n.label} data-nav={n.key}>
                             <Icon name={n.icon} />
                             <span class="nav-label">{n.label}</span>
                           </a>
