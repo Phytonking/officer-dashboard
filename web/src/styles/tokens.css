@@ -37,6 +37,8 @@
   --c-coral: #d9634a;
   --c-violet: #7a5bd0;
   --c-green: #3d8f3f;
+  --sapling-leaf: #82c61b; /* the cseed sapling mark (src/ui/brand) */
+  --sapling-stem: #358b20;
   --tint: 11%;
   /* Shape */
   --radius-card: 12px;
@@ -79,6 +81,8 @@
   --c-coral: #d96d52;
   --c-violet: #8f78e0;
   --c-green: #4fa156;
+  --sapling-leaf: #8ccf24;
+  --sapling-stem: #5fae3c;
   --tint: 18%;
 }
 @media (prefers-color-scheme: dark) {
@@ -107,6 +111,8 @@
    --c-coral: #d96d52;
    --c-violet: #8f78e0;
    --c-green: #4fa156;
+   --sapling-leaf: #8ccf24;
+   --sapling-stem: #5fae3c;
    --tint: 18%;
  }
 }

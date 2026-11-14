@@ -1,34 +1,27 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { ACCESSIBLE_GREETING, GREETINGS, type Greeting } from './greetings';
+import { saplingSvg } from '../brand/sapling';
 import { LogoImages } from './LogoMark';
-import { nextPalette } from './palette';
-import { buildPlan, type Plan } from './snakePlan';
+import { buildPlan, roundCorners, type Plan } from './snakePlan';
 import './intro.css';
 
-/** Background video and group photo. Built from what is in `public/media/` (see onboarding.astro and docs/frontend.md). */
+/** The group photo, built from what is in `public/media/` (see onboarding.astro and docs/frontend.md). */
 export interface HelloMedia {
-  /** `<source>`s for the looping background video, best first; empty = the animated gradient. */
-  video: { src: string; type: string }[];
-  poster?: string;
   /** The group photo; absent = the placeholder illustration. */
   photo?: string;
 }
 export const PHOTO_PLACEHOLDER = '/media/hello-group-placeholder.svg';
-const NO_MEDIA: HelloMedia = { video: [] };
+const NO_MEDIA: HelloMedia = {};
 
-/** How long each language stays (ms), its fade, and the palette rhythm: a new colour every 1.2s, cross-faded over 0.9s. */
+/** How long each language stays (ms) and its fades. */
 const CYCLE_MS = 2100;
 const FADE_IN = 560;
 const FADE_OUT = 380;
-const PALETTE_MS = 1200;
-const PALETTE_FADE = 900;
 const EASE = 'cubic-bezier(.2, .8, .2, 1)';
 /** Reduced motion: how long the photo stays before the fade to the logo. */
 const REDUCED_HOLD = 1500;
 
 const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
-/** SVG filters in `backdrop-filter` (refraction) only render in Chromium; elsewhere the glass is blur only. */
-const canRefract = () => typeof navigator !== 'undefined' && /\b(?:Chrome|Chromium)\/\d+/.test(navigator.userAgent);
 
 function Phrase({ g }: { g: Greeting }) {
   const [before = '', after = ''] = g.text.split('{cseed}');
@@ -48,7 +41,7 @@ function Phrase({ g }: { g: Greeting }) {
 interface Props {
   /** Called once the intro has finished and its logo sits exactly where the page's logo is. */
   onDone: () => void;
-  /** CSS selector of the page's logo, the snake's destination (it may carry `data-kind="mark"`). */
+  /** CSS selector of the page's logo, the snake's destination (it may carry `data-kind="mark"`: the rail's sapling). */
   targetSelector?: string;
   media?: HelloMedia;
 }
@@ -56,12 +49,12 @@ interface Props {
 type State = 'greeting' | 'playing' | 'spelled' | 'done';
 
 /**
- * The first screen of onboarding (V0.10). "Hello, welcome to cseed" cycles through 15 languages
- * in glass letters over a drifting mesh of colour that changes every 1.2s, with an optional
- * video behind. There is no start button. Any click, tap or key (Tab still moves focus, Escape
- * skips) brings up the group photo and starts an arcade snake. It eats the greeting, eats the
- * apples along the word, spells "cseed" with its body, holds, then shrinks into the top-left logo.
- * Pressing again fast-forwards. With reduced motion (or Skip) there is no snake.
+ * The first screen of onboarding (V0.10, calmer in V0.11). "Hello, welcome to cseed" cycles
+ * through 15 languages on the app's plain background. There is no start button. Any click, tap or
+ * key (Tab still moves focus, Escape skips) brings up the group photo and starts an arcade snake.
+ * It eats the greeting, eats the seeds laid along the word, writes "cseed" with its body, a
+ * sapling sprouts after the d, and the whole wordmark shrinks onto the shell's logo. Pressing
+ * again fast-forwards. With reduced motion (or Skip) there is no snake.
  */
 export function WelcomeIntro({ onDone, targetSelector = '[data-onb-logo]', media = NO_MEDIA }: Props) {
   const root = useRef<HTMLDivElement>(null);
@@ -73,9 +66,7 @@ export function WelcomeIntro({ onDone, targetSelector = '[data-onb-logo]', media
   const bg = useRef<HTMLDivElement>(null);
   const photo = useRef<HTMLElement>(null);
   const hint = useRef<HTMLParagraphElement>(null);
-  const washes = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<State>('greeting');
-  const [videoOn, setVideoOn] = useState(media.video.length > 0);
   const [photoSrc, setPhotoSrc] = useState(media.photo ?? PHOTO_PLACEHOLDER);
   const stateRef = useRef<State>(state);
   const go = (s: State) => {
@@ -90,30 +81,6 @@ export function WelcomeIntro({ onDone, targetSelector = '[data-onb-logo]', media
   const doneRef = useRef(onDone);
   doneRef.current = onDone;
   const reduced = useRef(reducedMotion());
-  const refract = useRef(canRefract());
-
-  /* ── Colour: a new random palette every 1.2s, cross-faded (never cut) between two layers ── */
-  useEffect(() => {
-    const layers = Array.from(washes.current?.children ?? []) as HTMLElement[];
-    let hue = Math.random() * 360;
-    let i = 0;
-    const paint = () => {
-      const p = nextPalette(hue);
-      hue = p.hue;
-      const next = layers[i % 2];
-      const prev = layers[(i + 1) % 2];
-      if (!next || !prev) return;
-      next.style.background = p.css;
-      next.style.zIndex = '2';
-      prev.style.zIndex = '1';
-      next.animate([{ opacity: 0 }, { opacity: 1 }], { duration: i === 0 || reduced.current ? 1 : PALETTE_FADE, easing: 'cubic-bezier(.4, 0, .2, 1)', fill: 'forwards' });
-      i++;
-    };
-    paint();
-    // Reduced motion keeps one palette: no colour changes at all.
-    const id = reduced.current ? 0 : window.setInterval(paint, PALETTE_MS);
-    return () => clearInterval(id);
-  }, []);
 
   /* ── Greeting cycle ── */
   useEffect(() => {
@@ -138,7 +105,7 @@ export function WelcomeIntro({ onDone, targetSelector = '[data-onb-logo]', media
       timer.current = window.setTimeout(tick, CYCLE_MS);
     };
     timer.current = window.setTimeout(tick, 150);
-    const hintTimer = window.setTimeout(() => hint.current?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 600, fill: 'forwards' }), 1400);
+    const hintTimer = window.setTimeout(() => stateRef.current === 'greeting' && hint.current?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 600, fill: 'forwards' }), 1400);
     return () => {
       clearTimeout(timer.current);
       clearTimeout(hintTimer);
@@ -174,7 +141,8 @@ export function WelcomeIntro({ onDone, targetSelector = '[data-onb-logo]', media
     // The page's logo is the destination; measured now (fixed overlay = viewport coordinates).
     const target = document.querySelector<HTMLElement>(targetSelector);
     const found = target?.getBoundingClientRect();
-    const box = found && found.width ? { x: found.left, y: found.top, w: found.width, h: found.height } : { x: 20, y: 20, w: 78, h: 18 };
+    const kind: 'mark' | 'wordmark' = target?.dataset.kind === 'mark' ? 'mark' : 'wordmark';
+    const box = found && found.width ? { x: found.left, y: found.top, w: found.width, h: found.height, kind } : { x: 20, y: 20, w: 78, h: 18, kind };
     const lg = logo.current!;
     lg.style.left = `${box.x}px`;
     lg.style.top = `${box.y}px`;
@@ -236,7 +204,7 @@ export function WelcomeIntro({ onDone, targetSelector = '[data-onb-logo]', media
         return { left: Math.min(...rects.map((q) => q.left)), right: Math.max(...rects.map((q) => q.right)), top: Math.min(...rects.map((q) => q.top)), bottom: Math.max(...rects.map((q) => q.bottom)) };
       })();
       const plan = buildPlan({ vw, vh, text: textBox ?? { left: vw * 0.2, right: vw * 0.8, top: vh * 0.45, bottom: vh * 0.55 }, target: box });
-      finished = runSnake(plan, current, run, (after) => end(after, [bg.current!, ph, board.current!, st]));
+      finished = runSnake(plan, box, current, run, (after) => end(after, [bg.current!, ph, board.current!, st]));
     }
 
     finished
@@ -248,8 +216,8 @@ export function WelcomeIntro({ onDone, targetSelector = '[data-onb-logo]', media
       .catch(() => {});
   };
 
-  /** Lays out the board, the greeting strips and the apples, then drives the snake one grid tick at a time. */
-  const runSnake = (plan: Plan, current: HTMLElement | undefined, run: (t: Element, f: Keyframe[], o: KeyframeAnimationOptions) => Animation, end: (after: number) => Animation) => {
+  /** Lays out the board, the greeting strips and the seeds, then drives the snake one grid tick at a time. */
+  const runSnake = (plan: Plan, box: { kind: 'mark' | 'wordmark' }, current: HTMLElement | undefined, run: (t: Element, f: Keyframe[], o: KeyframeAnimationOptions) => Animation, end: (after: number) => Animation) => {
     const layer = fx.current!;
     const bd = board.current!;
     const sn = snake.current!;
@@ -283,25 +251,38 @@ export function WelcomeIntro({ onDone, targetSelector = '[data-onb-logo]', media
       }
     }
 
-    // 2. Apples on the word, popping in while the snake is off-screen; each goes when the head lands on it.
+    // 2. Seeds on the letters, popping in while the snake is off-screen; each goes when the head lands on it.
+    //    The hidden lifts between letters hold seeds too (that is how the snake keeps growing), but they are never drawn.
     const wrapT = plan.at[plan.wrapAt]!;
-    const stagger = Math.min(6, 320 / plan.apples.length);
-    plan.apples.forEach((idx, j) => {
-      const cell = plan.route[idx]!;
-      const p = plan.px(cell);
+    const seeds = plan.apples.filter((idx) => plan.route[idx]!.kind === 'letter');
+    const stagger = Math.min(6, 320 / seeds.length);
+    const seedSize = Math.max(4, Math.round(S * 0.56));
+    seeds.forEach((idx, j) => {
+      const p = plan.px(plan.route[idx]!);
       const a = document.createElement('div');
       a.className = 'wi-apple';
       a.setAttribute('data-wi-apple', '');
-      a.dataset.kind = cell.kind;
-      const size = Math.round(S * 0.7);
-      a.style.width = a.style.height = `${size}px`;
-      const pos = `translate(${(p.x + (C - size) / 2).toFixed(1)}px, ${(p.y + (C - size) / 2).toFixed(1)}px)`;
+      a.style.width = `${seedSize}px`;
+      a.style.height = `${Math.round(seedSize * 1.15)}px`;
+      const pos = `translate(${(p.x + (C - seedSize) / 2).toFixed(1)}px, ${(p.y + (C - seedSize * 1.15) / 2).toFixed(1)}px)`;
       layer.appendChild(a);
       run(a, [{ opacity: 0, transform: `${pos} scale(0)` }, { opacity: 1, transform: `${pos} scale(1.25)`, offset: 0.6 }, { opacity: 1, transform: `${pos} scale(1)` }], { delay: wrapT - 380 + j * stagger, duration: 300, easing: EASE });
       run(a, [{ opacity: 0, transform: `${pos} scale(1)` }], { delay: plan.at[idx]!, duration: 1, fill: 'forwards' });
     });
 
-    // 3. The snake: one pooled square per body cell, moved by transform on each tick.
+    // 3. The snake: one pooled square per body cell, moved by transform on each tick. A cell on a
+    //    hidden lift is never drawn, so the snake writes only the letters.
+    const word = document.createElement('div');
+    word.className = 'wi-word';
+    sn.appendChild(word);
+    // The snake is drawn in the wordmark's own ink (fixed, both themes) while the light photo card
+    // is behind it. A copy of the written word in the theme's text colour sits on top, filled in
+    // once the word is written, and fades in over the shrink, so in dark mode the word arrives on
+    // the dark shell as light ink, the same as the white wordmark that takes over (opacity only).
+    const themed = document.createElement('div');
+    themed.className = 'wi-word wi-word--themed';
+    themed.setAttribute('data-wi-word-themed', '');
+    sn.appendChild(themed);
     const max = plan.ticks[plan.ticks.length - 1]!.len;
     const segs: HTMLElement[] = [];
     for (let i = 0; i < max; i++) {
@@ -312,7 +293,7 @@ export function WelcomeIntro({ onDone, targetSelector = '[data-onb-logo]', media
       if (i === 0) d.innerHTML = '<i class="wi-eye wi-eye--l"></i><i class="wi-eye wi-eye--r"></i>';
       segs.push(d);
     }
-    for (let i = max - 1; i >= 0; i--) sn.appendChild(segs[i]!);
+    for (let i = max - 1; i >= 0; i--) word.appendChild(segs[i]!);
     const render = (t: number) => {
       const body = plan.body(t);
       segs.forEach((el, s) => {
@@ -323,7 +304,7 @@ export function WelcomeIntro({ onDone, targetSelector = '[data-onb-logo]', media
         }
         const c = plan.route[ri]!;
         const p = plan.px(c);
-        const on = c.x >= -1 && c.x <= plan.cols && c.y >= -1 && c.y <= plan.rows;
+        const on = c.kind !== 'lift' && c.x >= -1 && c.x <= plan.cols && c.y >= -1 && c.y <= plan.rows;
         el.style.opacity = on ? '1' : '0';
         let rot = '';
         if (s === 0) {
@@ -337,16 +318,50 @@ export function WelcomeIntro({ onDone, targetSelector = '[data-onb-logo]', media
         el.dataset.cell = `${c.x - plan.gx0},${c.y - plan.gy0}`;
       });
     };
+
+    // The sapling, waiting to sprout after the d.
+    const sprout = document.createElement('div');
+    sprout.className = 'wi-sprout';
+    sprout.setAttribute('data-wi-sprout', '');
+    sprout.innerHTML = saplingSvg();
+    sprout.style.width = sprout.style.height = `${plan.sprout.size.toFixed(1)}px`;
+    sprout.style.left = `${plan.sprout.x.toFixed(1)}px`;
+    sprout.style.top = `${plan.sprout.y.toFixed(1)}px`;
+    sn.insertBefore(sprout, word);
+
     const last = plan.ticks.length - 1;
     let shown = -1;
     const t0 = performance.now();
+    const corners = roundCorners();
     const spelled = () => {
       render(last);
       shown = last;
-      // Dim the joins so "cseed" reads (opacity only, on the compositor).
-      if (stateRef.current === 'playing') segs.forEach((el) => el.dataset.kind === 'join' && run(el, [{ opacity: 0.26 }], { duration: 300, fill: 'forwards' }));
       cancelAnimationFrame(raf.current);
-      if (stateRef.current === 'playing') go('spelled');
+      if (stateRef.current !== 'playing') return;
+      // The cells close up into solid, round strokes (scale and opacity on the compositor; the
+      // corners are a one-off restyle), the eyes close and the sapling sprouts.
+      const grow = (C / S) * 1.06;
+      segs.forEach((el) => {
+        if (el.dataset.kind !== 'letter') return;
+        // Square where cells meet, round only on the outer corner of a turn.
+        const r = corners.get(el.dataset.cell!);
+        el.style.borderRadius = '0';
+        if (r) {
+          el.dataset.round = r;
+          el.style[({ tl: 'borderTopLeftRadius', tr: 'borderTopRightRadius', br: 'borderBottomRightRadius', bl: 'borderBottomLeftRadius' } as const)[r]] = '50%';
+        }
+        // Scale after the cell's own translate, so each cell grows about its own centre.
+        const at = el.style.transform;
+        run(el, [{ transform: `${at} scale(1)` }, { transform: `${at} scale(${grow.toFixed(3)})` }], { duration: 260, easing: EASE, fill: 'forwards' });
+        const copy = document.createElement('div');
+        copy.className = 'wi-seg';
+        copy.style.cssText = el.style.cssText;
+        copy.style.opacity = '1';
+        copy.style.transform = `${at} scale(${grow.toFixed(3)})`;
+        themed.appendChild(copy);
+      });
+      segs[0]!.querySelectorAll('.wi-eye').forEach((e) => run(e, [{ opacity: 0 }], { duration: 160, fill: 'forwards' }));
+      go('spelled');
     };
     fastForward.current = spelled;
     const frame = (now: number) => {
@@ -364,10 +379,20 @@ export function WelcomeIntro({ onDone, targetSelector = '[data-onb-logo]', media
     shown = 0;
     raf.current = requestAnimationFrame(frame);
 
-    // 4. Hold on "cseed", then the word shrinks into the logo, which takes its place.
+    // 4. The sapling sprouts from its stem, the wordmark holds, then shrinks onto the page logo,
+    //    which takes its place. On the rail the sapling lands on the sapling mark and the word fades.
+    run(sprout, [
+      { opacity: 0, transform: 'scale(0, 0)' },
+      { opacity: 1, transform: 'scale(.35, .7)', offset: 0.35 },
+      { opacity: 1, transform: 'scale(1.08)', offset: 0.75 },
+      { opacity: 1, transform: 'scale(1)' },
+    ], { delay: plan.spelledAt + 120, duration: 620, easing: 'cubic-bezier(.3, .7, .3, 1)' });
     const { tx, ty, s } = plan.morph;
     run(bd, [{ opacity: 0 }], { delay: plan.morphAt - 300, duration: 300, fill: 'forwards' });
     run(sn, [{ transform: 'translate(0, 0) scale(1)' }, { transform: `translate(${tx.toFixed(2)}px, ${ty.toFixed(2)}px) scale(${s.toFixed(5)})` }], { delay: plan.morphAt, duration: plan.morphEnd - plan.morphAt, easing: 'cubic-bezier(.65, 0, .25, 1)' });
+    // (On the rail the word fades out instead, so the themed copy never shows.)
+    if (box.kind !== 'mark') run(themed, [{ opacity: 0 }, { opacity: 1 }], { delay: plan.morphAt, duration: plan.morphEnd - plan.morphAt, easing: 'cubic-bezier(.65, 0, .25, 1)' });
+    if (box.kind === 'mark') run(word, [{ opacity: 1 }, { opacity: 0 }], { delay: plan.morphAt, duration: (plan.morphEnd - plan.morphAt) * 0.6, easing: 'ease-in' });
     run(sn, [{ opacity: 1 }, { opacity: 0 }], { delay: plan.morphEnd - 100, duration: 140 });
     run(logo.current!, [{ opacity: 0, transform: 'scale(.85)' }, { opacity: 1, transform: 'scale(1)' }], { delay: plan.morphEnd - 160, duration: 220, easing: EASE });
     return end(plan.duration + 80).finished;
@@ -433,49 +458,17 @@ export function WelcomeIntro({ onDone, targetSelector = '[data-onb-logo]', media
   const hasPhoto = photoSrc !== PHOTO_PLACEHOLDER;
   return (
     <div
-      class={`wi${refract.current ? ' wi--refract' : ''}`}
+      class="wi"
       ref={root}
       tabIndex={-1}
       role="dialog"
       aria-modal="true"
       aria-label="Welcome to cseed. Press any key, click or tap anywhere to begin."
       data-state={state}
-      data-video={videoOn ? 'on' : 'off'}
       data-photo={hasPhoto ? 'on' : 'placeholder'}
       onClick={(e) => activate({ x: e.clientX, y: e.clientY })}
     >
-      <svg class="wi-svg" aria-hidden="true" focusable="false">
-        <filter id="wi-refract" x="-10%" y="-10%" width="120%" height="120%">
-          <feTurbulence type="fractalNoise" baseFrequency="0.012 0.018" numOctaves="2" seed="3" result="n" />
-          <feGaussianBlur in="n" stdDeviation="1.5" result="nb" />
-          <feDisplacementMap in="SourceGraphic" in2="nb" scale="22" xChannelSelector="R" yChannelSelector="G" />
-        </filter>
-        <filter id="wi-glass-text" x="-5%" y="-20%" width="110%" height="140%">
-          <feGaussianBlur in="SourceAlpha" stdDeviation="2.2" result="b" />
-          <feSpecularLighting in="b" surfaceScale="4" specularConstant=".95" specularExponent="22" lighting-color="#ffffff" result="s">
-            <feDistantLight azimuth="235" elevation="50" />
-          </feSpecularLighting>
-          <feComposite in="s" in2="SourceAlpha" operator="in" result="lit" />
-          <feMerge>
-            <feMergeNode in="SourceGraphic" />
-            <feMergeNode in="lit" />
-          </feMerge>
-        </filter>
-      </svg>
-      <div class="wi-bg" ref={bg} aria-hidden="true">
-        {videoOn && (
-          <video class="wi-video" data-wi-video autoplay muted loop playsInline preload="auto" poster={media.poster} onError={() => setVideoOn(false)}>
-            {media.video.map((v, i) => (
-              <source key={v.src} src={v.src} type={v.type} onError={i === media.video.length - 1 ? () => setVideoOn(false) : undefined} />
-            ))}
-          </video>
-        )}
-        <div class="wi-fallback" data-wi-fallback />
-        <div class="wi-washes" ref={washes}>
-          <div class="wi-wash" />
-          <div class="wi-wash" />
-        </div>
-      </div>
+      <div class="wi-bg" ref={bg} aria-hidden="true" />
       <figure class="wi-photo" ref={photo} data-wi-photo={hasPhoto ? 'photo' : 'placeholder'}>
         <img src={photoSrc} alt={hasPhoto ? 'The cseed team' : ''} decoding="async" onError={() => setPhotoSrc(PHOTO_PLACEHOLDER)} />
       </figure>
@@ -491,13 +484,13 @@ export function WelcomeIntro({ onDone, targetSelector = '[data-onb-logo]', media
       <div class="wi-logo" ref={logo} data-wi-logo aria-hidden="true">
         <LogoImages />
       </div>
-      <p class="wi-hint wi-glass-ui" ref={hint} aria-hidden="true">
+      <p class="wi-hint wi-ui" ref={hint} aria-hidden="true">
         <span class="wi-hint-mouse">Click anywhere or press any key</span>
         <span class="wi-hint-touch">Tap anywhere to begin</span>
       </p>
       <button
         type="button"
-        class="wi-skip wi-glass-ui"
+        class="wi-skip wi-ui"
         onClick={(e) => {
           e.stopPropagation();
           if (stateRef.current === 'greeting') play(true);
