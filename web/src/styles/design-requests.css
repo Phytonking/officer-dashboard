@@ -293,6 +293,10 @@
 
 /* Phones (A): stage tabs show one lane; the detail is a bottom sheet. Pipeline and This week
    stay on wider screens (the summary tiles already carry the totals). */
+/* Tablet and narrow desktop: a 2 x 2 grid so every lane (Done included) is on screen. */
+@media (min-width: 640px) and (max-width: 1179px) {
+  .board-lanes {grid-template-columns:repeat(2, minmax(0, 1fr));overflow-x:visible;}
+}
 @media (max-width: 639px) {
   .pipeline, .thisweek {display:none;}
   .design-toolbar .design-filters {order:3;flex-basis:100%;overflow-x:auto;flex-wrap:nowrap;padding-bottom:2px;}
