@@ -8,8 +8,7 @@ import type {
   BuildspaceProject,
 } from "../../../lib/contracts";
 import { api } from "../../../lib/api/client";
-import { setParams } from "../../../lib/nav";
-import { openForm } from "./Cards";
+import { pushEntry } from "./history";
 import { href } from "../../../lib/routes";
 import { fmtDate, fmtShort } from "../../../lib/format";
 import { Badge } from "../../components/kit";
@@ -87,7 +86,7 @@ export function BuildspaceDetail({
         </Badge>
         <button
           class="btn"
-          onClick={() => openForm({ edit: person ? "person" : "project" })}
+          onClick={() => pushEntry({ edit: person ? "person" : "project" })}
         >
           Edit {person ? "builder" : "project"}
         </button>
@@ -97,7 +96,7 @@ export function BuildspaceDetail({
           Building{" "}
           <button
             class="bs-title"
-            onClick={() => setParams({ person: null, project: project.id })}
+            onClick={() => pushEntry({ person: null, project: project.id })}
           >
             {project.name}
           </button>{" "}

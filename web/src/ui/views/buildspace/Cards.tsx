@@ -6,11 +6,13 @@
  * grouping) and the projects board.
  */
 import type { ComponentChildren } from "preact";
+import { Fragment } from "preact";
 import { useState } from "preact/hooks";
 import type { BuildspaceData, BuildspaceProject } from "../../../lib/contracts";
 import { personHue, type Hue } from "../../../lib/colors";
 import { fmtShort } from "../../../lib/format";
-import { navigate, setParams } from "../../../lib/nav";
+import { navigate } from "../../../lib/nav";
+import { pushEntry } from "./history";
 import { Icon, type IconName } from "../../components/Icon";
 import { PeopleChip } from "../../components/PeopleTable";
 import { Avatar, RowMenu, type MenuItem } from "../../components/people";
@@ -36,21 +38,6 @@ export const STAGE_HUE: Partial<Record<BuildspaceProject["stage"], Hue>> = {
   "At risk": "coral",
   Shipped: "green",
 };
-
-const FORM = "cseedBuildspaceForm";
-/** Open a form on a new history entry, marked so leaving it can step back over it. */
-export function openForm(patch: Record<string, string>) {
-  setParams(patch);
-  history.replaceState({ ...(history.state ?? {}), [FORM]: true }, "", location.href);
-}
-/**
- * Leave a form: step back over its entry when this page pushed it (so Back cannot reopen it),
- * otherwise (a deep link) drop the parameter in place.
- */
-export function leaveForm(patch: Record<string, null>) {
-  if (history.state?.[FORM]) history.back();
-  else setParams(patch, { replace: true });
-}
 
 const DAY = 86_400_000;
 /** "Today", "Yesterday", "3 days ago", then the short date (club dates are plain ISO days). */
@@ -152,8 +139,8 @@ export function PersonCard({ p, b, scope, onPerson }: { p: Person; b: Buildspace
       menuLabel={`Actions for ${p.name}`}
       actions={[
         { label: "Open profile", onSelect: () => onPerson(p.id) },
-        { label: "Edit builder", onSelect: () => openForm({ person: p.id, edit: "person" }) },
-        { label: "Open project", onSelect: () => setParams({ project: pr.id }) },
+        { label: "Edit builder", onSelect: () => pushEntry({ person: p.id, edit: "person" }) },
+        { label: "Open project", onSelect: () => pushEntry({ project: pr.id }) },
         ...(p.memberId ? [{ label: "Member record", onSelect: () => navigate(memberHref(p.memberId!)) }] : []),
       ]}
     >
@@ -210,7 +197,7 @@ export function ProjectCard({ p, b, scope = "", onPerson }: { p: BuildspaceProje
   const awaiting = people.filter((x) => missed(x, b)).length;
   const open = openCount(b, p.id);
   const last = lastActivity(b, p.id);
-  const openProject = () => setParams({ project: p.id });
+  const openProject = () => pushEntry({ project: p.id });
   return (
     <CardShell
       hue={TRACK_HUE[p.track]}
@@ -220,7 +207,7 @@ export function ProjectCard({ p, b, scope = "", onPerson }: { p: BuildspaceProje
       menuLabel={`Actions for ${p.name}`}
       actions={[
         { label: "Open project", onSelect: openProject },
-        { label: "Edit project", onSelect: () => openForm({ project: p.id, edit: "project" }) },
+        { label: "Edit project", onSelect: () => pushEntry({ project: p.id, edit: "project" }) },
       ]}
     >
       <header class="bs-card-id">
@@ -247,12 +234,12 @@ export function ProjectCard({ p, b, scope = "", onPerson }: { p: BuildspaceProje
           <span class="bs-signal-list">
             {people.length
               ? people.map((x, i) => (
-                  <>
+                  <Fragment key={x.id}>
                     {i > 0 && ", "}
                     <button type="button" class="bs-link" onClick={() => onPerson(x.id)}>
                       {x.name}
                     </button>
-                  </>
+                  </Fragment>
                 ))
               : "No builders yet"}
           </span>
@@ -272,7 +259,8 @@ export function ProjectCard({ p, b, scope = "", onPerson }: { p: BuildspaceProje
 }
 
 export function MentorCard({ m, b, projects, scope }: { m: Mentor; b: BuildspaceData; projects: BuildspaceProject[]; scope: string }) {
-  const builders = b.people.filter((x) => b.projects.some((p) => p.id === x.projectId && p.mentorIds.includes(m.id))).length;
+  // Builders on the projects this card lists (the group's and filters' projects), not every project.
+  const builders = b.people.filter((x) => projects.some((p) => p.id === x.projectId)).length;
   const contact = `/contacts?person=${encodeURIComponent(m.id)}`;
   return (
     <CardShell
@@ -308,12 +296,12 @@ export function MentorCard({ m, b, projects, scope }: { m: Mentor; b: Buildspace
           <span class="bs-signal-list">
             {projects.length
               ? projects.map((p, i) => (
-                  <>
+                  <Fragment key={p.id}>
                     {i > 0 && ", "}
-                    <button type="button" class="bs-link" onClick={() => setParams({ project: p.id })}>
+                    <button type="button" class="bs-link" onClick={() => pushEntry({ project: p.id })}>
                       {p.name}
                     </button>
-                  </>
+                  </Fragment>
                 ))
               : "No projects assigned"}
           </span>

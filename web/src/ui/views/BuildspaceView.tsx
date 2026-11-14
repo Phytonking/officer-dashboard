@@ -20,7 +20,8 @@ import type { CurrentUser } from "../../lib/contracts";
 import { ScheduleMenu } from "./buildspace/Schedule";
 import { BuildspaceDetail } from "./buildspace/Detail";
 import { ProjectForm, PersonForm } from "./buildspace/Forms";
-import { CardGroup, MentorCard, PersonCard, ProjectCard, TRACK_HUE, STAGE_HUE, checkIn, openForm, leaveForm } from "./buildspace/Cards";
+import { CardGroup, MentorCard, PersonCard, ProjectCard, TRACK_HUE, STAGE_HUE, checkIn } from "./buildspace/Cards";
+import { closeAll, leaveEntry, pushEntry } from "./buildspace/history";
 import { PeopleChip } from "../components/PeopleTable";
 import {
   missed,
@@ -50,12 +51,12 @@ export default function BuildspaceView({ me }: { me: CurrentUser }) {
               setNotice("Check-in schedule saved.");
             }}
           />
-          <button class="btn" onClick={() => openForm({ new: "person" })}>
+          <button class="btn" onClick={() => pushEntry({ new: "person" })}>
             Add builder
           </button>
           <button
             class="btn btn--primary"
-            onClick={() => openForm({ new: "project" })}
+            onClick={() => pushEntry({ new: "project" })}
           >
             New project
           </button>
@@ -173,9 +174,9 @@ function BuildspaceContent({
   });
   const detailPerson = b.people.find((p) => p.id === qs.get("person"));
   const detailProject = b.projects.find((p) => p.id === qs.get("project"));
-  // Closing replaces the entry, so Back never lands on a form that was closed or saved (R-4).
-  const close = () =>
-    setParams({ person: null, project: null, new: null, edit: null }, { replace: true });
+  // Closing steps back over the entries this page pushed (or drops a deep link in place), so
+  // Back never reopens a closed form and leaves no dead entry (R-4, review F-2).
+  const close = closeAll;
   const saved = () => {
     reload();
     close();
@@ -211,7 +212,7 @@ function BuildspaceContent({
       .map((m) => m.name)
       .join(", ") || "No mentor assigned";
   const projectLink = (p: BuildspaceProject) => (
-    <button class="bs-title" onClick={() => setParams({ project: p.id })}>
+    <button class="bs-title" onClick={() => pushEntry({ project: p.id })}>
       {p.name}
     </button>
   );
@@ -675,9 +676,9 @@ function BuildspaceContent({
         name={detailPerson?.name || "Builder"}
         status={!detailPerson ? <Empty title="This record could not be found" /> : undefined}
         eyebrow={detailPerson ? "Buildspace + Launchpad builder" : undefined}
-        subtitle={detailPerson ? <button class="bs-title" onClick={() => setParams({ person: null, project: detailPerson.projectId })}>{project(detailPerson.projectId).name}</button> : undefined}
+        subtitle={detailPerson ? <button class="bs-title" onClick={() => pushEntry({ person: null, project: detailPerson.projectId })}>{project(detailPerson.projectId).name}</button> : undefined}
         actions={detailPerson ? [
-          { label: "Edit builder", icon: "pen", onClick: () => openForm({ edit: "person" }) },
+          { label: "Edit builder", icon: "pen", onClick: () => pushEntry({ edit: "person" }) },
           ...(detailPerson.memberId ? [{ label: "Member record", icon: "user", href: `/members?person=${encodeURIComponent(detailPerson.memberId)}` }] : []),
         ] : []}
         stats={detailPerson ? [{ label: "Joined", value: <time dateTime={detailPerson.joinedOn}>{fmtDate(detailPerson.joinedOn)}</time> }] : []}
@@ -710,10 +711,9 @@ function BuildspaceContent({
         onClose={() => {
           const current = new URLSearchParams(location.search);
           if (current.has("person") && !current.has("edit") && !current.has("new")) return;
-          // Leaving a builder form steps back to the profile it came from; a new record or a
-          // project edit closes. Either way the form's own history entry is dropped (R-4).
-          if (current.has("edit") && current.has("person")) leaveForm({ edit: null });
-          else if (current.has("new")) leaveForm({ new: null });
+          // Leaving a builder form steps back to the profile it came from; everything else
+          // (project, project edit, new record) closes back to the list (R-4, F-2).
+          if (current.has("edit") && current.has("person")) leaveEntry({ edit: null });
           else close();
         }}
         id="buildspace-detail"

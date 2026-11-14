@@ -394,3 +394,98 @@ test('cards use the officer card style in every grouping, open the drawer, and f
   expect(await overflow(page)).toEqual([]);
   expect(errors).toEqual([]);
 });
+
+test('mentor cards count the builders on the projects they list, per group and filter (F-1)', async ({ page }) => {
+  await devLogin(page, 'director');
+  const data = await page.request.get('/api/buildspace-launchpad').then((r) => r.json());
+  const builders = (names: string[]) =>
+    data.people.filter((x: any) => data.projects.some((p: any) => names.includes(p.name) && p.id === x.projectId)).length;
+  const check = async () => {
+    const cards = page.locator('.bs-groups [data-mentor-card]');
+    const n = await cards.count();
+    expect(n).toBeGreaterThan(0);
+    for (let i = 0; i < n; i++) {
+      const card = cards.nth(i);
+      const listed = await card.locator('[data-signal="projects"] button').allTextContents();
+      const want = builders(listed);
+      await expect(card.locator('[data-signal="builders"] dd')).toHaveText(want === 1 ? '1 builder' : `${want} builders`);
+    }
+  };
+  await open(page, '/buildspace-launchpad?tab=mentors&view=cards&group=track');
+  await check();
+  // A mentor on projects in two tracks shows a smaller count in each group than in total.
+  const split = data.mentors.find((m: any) => new Set(data.projects.filter((p: any) => p.mentorIds.includes(m.id)).map((p: any) => p.track)).size > 1);
+  if (split) expect(await page.locator(`.bs-groups [data-mentor-card="${split.id}"]`).count()).toBeGreaterThan(1);
+  await open(page, '/buildspace-launchpad?tab=mentors&view=cards&group=track&track=Software');
+  await check();
+});
+
+test('closing drawers and saving forms leave no dead history entry (F-2)', async ({ page }) => {
+  await devLogin(page, 'director');
+  const backToEvents = async () => {
+    await page.goBack();
+    await expect(page).toHaveURL(/\/events$/);
+    await expect(page.locator('dialog[open]')).toHaveCount(0);
+  };
+  const start = async (path: string) => {
+    await page.goto('/events');
+    await settle(page);
+    await open(page, path);
+  };
+  const detail = page.locator('#buildspace-detail');
+  const person = page.locator('#buildspace-person');
+
+  // 1. A project opened from its card, closed with Esc: one Back leaves the page.
+  await start('/buildspace-launchpad?tab=projects&view=cards');
+  await page.locator('.bs-groups [data-project-card="bs-moss"]').getByRole('button', { name: 'Moss', exact: true }).click();
+  await expect(detail).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(detail).not.toBeVisible();
+  await expect(page).toHaveURL(/\/buildspace-launchpad\?tab=projects&view=cards$/);
+  await backToEvents();
+
+  // 2. Project → Edit project → Esc closes to the list; one Back leaves the page.
+  await start('/buildspace-launchpad?tab=projects&view=cards');
+  await page.locator('.bs-groups [data-project-card="bs-moss"]').getByRole('button', { name: 'Moss', exact: true }).click();
+  await detail.getByRole('button', { name: 'Edit project' }).click();
+  await expect(page).toHaveURL(/edit=project/);
+  await page.keyboard.press('Escape');
+  await expect(detail).not.toBeVisible();
+  await expect(page).toHaveURL(/\/buildspace-launchpad\?tab=projects&view=cards$/);
+  await backToEvents();
+
+  // 3. Saving a builder edit opened from the profile closes both; one Back leaves the page.
+  await start('/buildspace-launchpad');
+  await page.locator('.bs-table').getByRole('button', { name: 'Alex Kim', exact: true }).click();
+  await person.getByRole('button', { name: 'Edit builder', exact: true }).click();
+  await detail.getByRole('button', { name: 'Save builder' }).click();
+  await expect(page.getByText('Saved to Buildspace + Launchpad.')).toBeVisible();
+  await expect(page.locator('dialog[open]')).toHaveCount(0);
+  await expect(page).toHaveURL(/\/buildspace-launchpad$/);
+  await backToEvents();
+
+  // 4. Saving an edit opened straight from a card menu.
+  await start('/buildspace-launchpad?view=cards');
+  const alex = page.locator('.bs-groups [data-person-card="bs-person-01"]').first();
+  await alex.hover();
+  await alex.getByRole('button', { name: 'Actions for Alex Kim' }).click();
+  await page.getByRole('menuitem', { name: 'Edit builder' }).click();
+  await detail.getByRole('button', { name: 'Save builder' }).click();
+  await expect(page.locator('dialog[open]')).toHaveCount(0);
+  await expect(page).toHaveURL(/\/buildspace-launchpad\?view=cards$/);
+  await backToEvents();
+
+  // 5. Deep links have nothing to step back over: closing drops the parameters in place.
+  await start('/buildspace-launchpad?project=bs-moss');
+  await expect(detail).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page).toHaveURL(/\/buildspace-launchpad$/);
+  await backToEvents();
+  await start('/buildspace-launchpad?project=bs-moss');
+  await detail.getByRole('button', { name: 'Edit project' }).click();
+  await page.keyboard.press('Escape');
+  await expect(page).toHaveURL(/\/buildspace-launchpad$/);
+  await expect(page.locator('dialog[open]')).toHaveCount(0);
+  await page.goBack();
+  await expect(page).toHaveURL(/\/events$/);
+});

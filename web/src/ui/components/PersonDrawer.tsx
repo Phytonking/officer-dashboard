@@ -24,6 +24,8 @@ import '../../styles/people.css';
 // ─────────────────────────── URL state ───────────────────────────
 
 const MARK = 'cseedPersonDrawer';
+/** The history-state key on entries usePersonParam pushed (Buildspace counts them). */
+export const PERSON_MARK = MARK;
 
 /**
  * The person open in this page's drawer, from `?person=<id>`. `open` pushes a history entry
