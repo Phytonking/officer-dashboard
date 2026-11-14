@@ -1,20 +1,21 @@
 import { expect, test } from '@playwright/test';
 import { devSignIn, settle } from './helpers';
 
-// V0.10: every non-home page fits the viewport (no sideways scroll, nothing pushed past the edge),
+// V0.10 (V0.11: clientWidth, Events + Finance tables): every non-home page fits the viewport (no sideways scroll, nothing pushed past the edge),
 // and the StatRow tiles are Home's widget cards. Runs in the phone / tablet / desktop projects.
-const PAGES = ['/buildspace', '/events', '/finance', '/settings', '/design', '/officers', '/members', '/contacts'];
+const PAGES = ['/buildspace-launchpad', '/events', '/finance', '/settings', '/design', '/officers', '/members', '/contacts'];
 
 for (const path of PAGES) {
   test(`${path} fits the viewport`, async ({ page }) => {
     const res = await devSignIn(page, { as: 'director' }, path);
     expect(res?.ok(), 'dev login failed; is the Go server running with DEV_AUTH=1?').toBe(true);
     await settle(page);
-    const m = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, inner: window.innerWidth }));
-    expect(m.scroll, `${path}: scrollWidth ${m.scroll} > innerWidth ${m.inner}`).toBeLessThanOrEqual(m.inner);
+    // clientWidth, not innerWidth: Chromium's mobile zoom-out inflates innerWidth to the overflowing page's width.
+    const m = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, inner: document.documentElement.clientWidth }));
+    expect(m.scroll, `${path}: scrollWidth ${m.scroll} > clientWidth ${m.inner}`).toBeLessThanOrEqual(m.inner);
     // Nothing in the page's own flow sticks out of the right edge (scroll containers clip their own overflow).
     const clipped = await page.evaluate(() => {
-      const inner = window.innerWidth;
+      const inner = document.documentElement.clientWidth;
       const out: string[] = [];
       const scrolls = (el: Element | null) => {
         for (; el && el !== document.body; el = el.parentElement) {

@@ -4,6 +4,7 @@ import { categoryHue, STATUS_HUE, type Hue } from '../../lib/colors';
 import type { PurchaseStatus } from '../../lib/domain';
 import { pct, STATUS_LABEL, STATUS_TONE, type Tone } from '../../lib/format';
 import { Icon, type IconName } from './Icon';
+import '../../styles/bs-table.css';
 
 /** A status: a coloured dot plus a written label (never colour alone). `hue` overrides the tone's dot. */
 export function Badge({ tone, hue, children }: { tone: Tone; hue?: Hue | null; children: ComponentChildren }) {
@@ -182,6 +183,7 @@ export function DataTable<T>({
   dense,
   showCaption,
   wide,
+  bs,
 }: {
   rows: T[];
   columns: Column<T>[];
@@ -193,10 +195,12 @@ export function DataTable<T>({
   showCaption?: boolean;
   /** Many columns: use stacked cards below desktop width, not only on phones. */
   wide?: boolean;
+  /** Buildspace-style table (bs-table.css) instead of the hairline one. */
+  bs?: boolean;
 }) {
   return (
-    <div class="table-wrap">
-      <table class={`dt${dense ? ' dt--dense' : ''}${wide ? ' dt--wide' : ''}`}>
+    <div class={bs ? 'table-wrap bs-wrap' : 'table-wrap'}>
+      <table class={bs ? 'bs-table' : `dt${dense ? ' dt--dense' : ''}${wide ? ' dt--wide' : ''}`}>
         {caption && <caption class={showCaption ? 'dt-caption' : 'visually-hidden'}>{caption}</caption>}
         <thead>
           <tr>
@@ -207,13 +211,13 @@ export function DataTable<T>({
             ))}
           </tr>
         </thead>
-        <tbody>
+        <tbody class={bs ? 'motion-list' : undefined}>
           {rows.map((row) => (
             <tr key={rowKey(row)}>
               {columns.map((c) => (
                 <td
                   key={c.key}
-                  class={[c.num ? 'num' : '', c.primary ? 'dt-primary' : '', c.hideOnPhone ? 'dt-hide-phone' : ''].filter(Boolean).join(' ') || undefined}
+                  class={[c.num ? 'num' : '', c.primary ? 'dt-primary' : '', c.hideOnPhone ? (bs ? 'bs-hide-phone' : 'dt-hide-phone') : ''].filter(Boolean).join(' ') || undefined}
                   data-label={c.cardLabel ?? (typeof c.label === 'string' ? c.label : '')}
                 >
                   {c.render(row)}

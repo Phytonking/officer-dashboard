@@ -1,3 +1,4 @@
+import "../../styles/bs-table.css";
 import { PersonDrawer, usePersonParam } from "../components/PersonDrawer";
 import { useRef, useState } from "preact/hooks";
 import {
@@ -606,7 +607,7 @@ function BuildspaceContent({
             </div>
           ) : (
             <div
-              class="table-wrap"
+              class="table-wrap bs-wrap"
               tabIndex={0}
               aria-label="Buildspace + Launchpad directory"
             >

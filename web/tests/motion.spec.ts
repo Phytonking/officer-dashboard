@@ -17,7 +17,7 @@ test('reduced motion: no entry animations and KPI figures appear at their final 
   // No count-up: the visible figure is the final one straight away (no aria-hidden tween span).
   await expect(kpi.locator('[aria-hidden="true"]')).toHaveCount(0);
   const anim = await page.evaluate(() =>
-    ['.page-enter', '.progress-fill', '.kpi', '.async-content', '.dt tbody tr', '.notice'].map((s) => {
+    ['.page-enter', '.progress-fill', '.kpi', '.async-content', '.dt tbody tr, .bs-table tbody tr', '.notice'].map((s) => {
       const el = document.querySelector(s);
       return el ? getComputedStyle(el).animationName : 'none';
     }),
@@ -54,12 +54,12 @@ test('first content frame stays paintable, shell holds still, and item stagger s
   await devLogin(page, 'director');
   await page.goto('/events');
   await settle(page);
-  await page.addStyleTag({ content: '.page-enter,.async-content,.dt tbody tr {animation-play-state:paused!important;animation-delay:0s!important;}' });
+  await page.addStyleTag({ content: '.page-enter,.async-content,.dt tbody tr,.bs-table tbody tr {animation-play-state:paused!important;animation-delay:0s!important;}' });
   // Reinsert the animation to inspect its first frame rather than its settled end state.
   const result = await page.evaluate(() => {
     const panel = document.querySelector<HTMLElement>('.page-enter')!;
     panel.style.animation = 'none'; void panel.offsetWidth; panel.style.animation = '';
-    const body = document.querySelector('.dt tbody')!;
+    const body = document.querySelector('.dt tbody, .bs-table tbody')!;
     while (body.children.length < 10) body.append(body.firstElementChild!.cloneNode(true));
     const rows = [...body.children] as HTMLElement[];
     rows.forEach(row => { row.style.animation = 'none'; });

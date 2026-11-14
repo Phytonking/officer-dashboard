@@ -299,7 +299,7 @@ function RequestsPanel({ director, tick, fy, fyFailed, onRetryFy }: { director: 
             )
           ) : (
             <>
-              <DataTable rows={d.items} columns={requestColumns({ showRequester: scope === 'all' })} rowKey={(r) => r.id} caption="Purchase requests" />
+              <DataTable rows={d.items} columns={requestColumns({ showRequester: scope === 'all' })} rowKey={(r) => r.id} caption="Purchase requests" bs />
               <p class="muted small">
                 {d.items.length} request{d.items.length === 1 ? '' : 's'} · {formatCents(d.items.reduce((sum, r) => sum + r.totalCents, 0))} total
               </p>

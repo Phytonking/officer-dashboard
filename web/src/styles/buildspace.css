@@ -113,31 +113,6 @@
   font-size: 12px;
   min-height: 34px;
 }
-.bs-table {
-  width: 100%;
-  font-size: 12px;
-  border-collapse: collapse;
-}
-.bs-table th {
-  font-size: 11px;
-  color: var(--muted);
-  font-weight: 500;
-  text-align: left;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--line);
-  white-space: nowrap;
-}
-.bs-table td {
-  padding: 16px 14px;
-  border-bottom: 1px solid var(--line);
-  vertical-align: middle;
-}
-.bs-table tbody tr:hover {
-  background: var(--sunken);
-}
-.bs-table td:first-child {
-  min-width: 180px;
-}
 .bs-title {
   border: 0;
   background: transparent;
@@ -152,10 +127,6 @@
 .bs-title:hover {
   text-decoration: underline;
   text-underline-offset: 4px;
-}
-.bs-table td .bs-title + .bs-title {
-  display: block;
-  margin-top: 6px;
 }
 .bs-track {
   display: inline-flex;
@@ -443,12 +414,6 @@
   .bs-cards {
     grid-template-columns: 1fr;
   }
-  .bs-table {
-    min-width: 770px;
-  }
-  .bs-table .bs-title {
-    min-height: 44px;
-  }
   .bs-result {
     align-items: start;
   }
@@ -472,59 +437,6 @@
   }
   .bs-title {
     min-height: 36px;
-  }
-}
-@media (max-width: 600px) {
-  .bs-table {
-    min-width: 0;
-  }
-  .bs-table thead {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-  }
-  .bs-table,
-  .bs-table tbody,
-  .bs-table tr,
-  .bs-table td {
-    display: block;
-    width: 100%;
-  }
-  .bs-table tr {
-    border-bottom: 1px solid var(--line);
-    padding: 16px 0;
-  }
-  .bs-table td {
-    padding: 5px 0;
-    border: 0;
-    min-width: 0;
-    overflow-wrap: anywhere;
-  }
-  .bs-table td:first-child {
-    padding-bottom: 12px;
-    min-width: 0;
-  }
-  .bs-table td:not(:first-child) {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 12px;
-    text-align: right;
-  }
-  .bs-table td:not(:first-child):before {
-    content: attr(data-label);
-    color: var(--muted);
-    font-size: 11px;
-    text-align: left;
-    flex-shrink: 0;
-  }
-  .bs-table td .bs-sub {
-    margin: 3px 0;
-  }
-  .bs-table td .bs-title {
-    min-height: 44px;
   }
 }
 
