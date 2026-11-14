@@ -81,7 +81,7 @@ export const requestColumns = (opts: { showRequester?: boolean; compact?: boolea
   ...(opts.showRequester === false ? [] : [{ key: 'who', label: 'requester', render: (r: PurchaseRequestListItem) => r.requester.name }]),
   ...(opts.compact
     ? []
-    : [{ key: 'cat', label: 'category · fund', hideOnPhone: true, render: (r: PurchaseRequestListItem) => <span class="small cat-name">
+    : [{ key: 'cat', label: 'category · fund', hideOnPhone: true, hideOnTablet: true, render: (r: PurchaseRequestListItem) => <span class="small cat-name">
             <CategoryDot code={r.expenseAccount.code} />
             {r.expenseAccount.name} · {r.fund.code}
           </span> }]),

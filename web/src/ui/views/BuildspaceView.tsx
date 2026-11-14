@@ -1,4 +1,3 @@
-import "../../styles/bs-table.css";
 import { PersonDrawer, usePersonParam } from "../components/PersonDrawer";
 import { useRef, useState } from "preact/hooks";
 import {
