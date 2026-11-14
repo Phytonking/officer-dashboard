@@ -153,6 +153,59 @@ export function ActivityList({ items, empty = 'No recent activity.' }: { items: 
   );
 }
 
+/**
+ * The drawer's tab strip. When the tabs are wider than the drawer (Buildspace has six) they
+ * scroll sideways; a fade and an arrow at each clipped edge say there is more, the arrows page
+ * the strip for pointer users, and the selected tab always scrolls into view (R-6).
+ */
+function DrawerTabs<K extends string>({ id, name, tabs, active, onChange }: { id: string; name: string; tabs: PersonTab<K>[]; active: K; onChange: (k: K) => void }) {
+  const wrap = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState({ start: false, end: false });
+  const strip = () => wrap.current?.querySelector<HTMLElement>('.tabs') ?? null;
+  useEffect(() => {
+    const el = strip();
+    if (!el) return;
+    const measure = () => {
+      const start = el.scrollLeft > 1;
+      const end = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
+      setEdges((e) => (e.start === start && e.end === end ? e : { start, end }));
+    };
+    measure();
+    el.addEventListener('scroll', measure, { passive: true });
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+    ro?.observe(el);
+    return () => {
+      el.removeEventListener('scroll', measure);
+      ro?.disconnect();
+    };
+  }, [tabs.length]);
+  useEffect(() => {
+    const el = strip();
+    const t = el?.querySelector<HTMLElement>(`[data-key="${active}"]`);
+    if (!el || !t) return;
+    const pad = 40; // keep clear of the fade
+    if (t.offsetLeft - pad < el.scrollLeft) el.scrollLeft = Math.max(0, t.offsetLeft - pad);
+    else if (t.offsetLeft + t.offsetWidth + pad > el.scrollLeft + el.clientWidth) el.scrollLeft = t.offsetLeft + t.offsetWidth + pad - el.clientWidth;
+  }, [active]);
+  const page = (dir: 1 | -1) => {
+    const el = strip();
+    if (!el) return;
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    el.scrollBy({ left: dir * el.clientWidth * 0.7, behavior: reduce ? 'auto' : 'smooth' });
+  };
+  return (
+    <div class="person-tabs" ref={wrap} data-scroll-start={edges.start || undefined} data-scroll-end={edges.end || undefined}>
+      <button type="button" class="person-tabs-arrow is-start" aria-hidden="true" tabIndex={-1} hidden={!edges.start} onClick={() => page(-1)}>
+        <Icon name="chevron-down" size={14} />
+      </button>
+      <Tabs label={`${name}: sections`} idPrefix={`${id}-t`} active={active} tabs={tabs.map((t) => ({ key: t.key, label: t.label }))} onChange={onChange} />
+      <button type="button" class="person-tabs-arrow is-end" aria-hidden="true" tabIndex={-1} hidden={!edges.end} onClick={() => page(1)}>
+        <Icon name="chevron-down" size={14} />
+      </button>
+    </div>
+  );
+}
+
 // ─────────────────────────── drawer ───────────────────────────
 
 export function PersonDrawer<K extends string>({
@@ -244,9 +297,7 @@ export function PersonDrawer<K extends string>({
         {status ?? (
           <>
             {tabs.length > 1 && active && (
-              <div class="person-tabs">
-                <Tabs label={`${name}: sections`} idPrefix={`${id}-t`} active={active.key} tabs={tabs.map((t) => ({ key: t.key, label: t.label }))} onChange={change} />
-              </div>
+              <DrawerTabs id={id} name={name} tabs={tabs} active={active.key} onChange={change} />
             )}
             <div class="person-body" {...(tabs.length > 1 ? { id: `${id}-t-panel`, role: 'tabpanel', 'aria-labelledby': `${id}-t-tab-${active?.key}` } : {})}>
               {stats.length > 0 && active === tabs[0] && (

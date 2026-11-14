@@ -158,7 +158,21 @@
 .person-actions .btn {display: inline-flex; align-items: center; gap: 6px;}
 .person-actions .btn .icon {width: 15px; height: 15px;}
 .person-tabs {position: sticky; top: 0; z-index: 1; background: var(--surface); padding: 0 24px;}
-.person-tabs .tabs {border-bottom: 1px solid var(--line);}
+.person-tabs .tabs {border-bottom: 1px solid var(--line); scroll-behavior: smooth;}
+/* Clipped tab strips fade at the cut edge and show an arrow there (R-6). */
+.person-tabs[data-scroll-end] .tabs {-webkit-mask-image: linear-gradient(to right, #000 calc(100% - 56px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 56px), transparent);}
+.person-tabs[data-scroll-start] .tabs {-webkit-mask-image: linear-gradient(to left, #000 calc(100% - 56px), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 56px), transparent);}
+.person-tabs[data-scroll-start][data-scroll-end] .tabs {-webkit-mask-image: linear-gradient(to right, transparent, #000 56px, #000 calc(100% - 56px), transparent); mask-image: linear-gradient(to right, transparent, #000 56px, #000 calc(100% - 56px), transparent);}
+.person-tabs-arrow {
+  position: absolute; top: 50%; z-index: 1; display: inline-grid; place-items: center; width: 28px; height: 28px; margin-top: -15px; padding: 0;
+  border: 1px solid var(--line); border-radius: 50%; background: var(--surface); color: var(--text); box-shadow: var(--block-shadow); cursor: pointer;
+}
+.person-tabs-arrow[hidden] {display: none;}
+.person-tabs-arrow:hover {background: var(--hover);}
+.person-tabs-arrow.is-start {left: 16px;}
+.person-tabs-arrow.is-start .icon {transform: rotate(90deg);}
+.person-tabs-arrow.is-end {right: 16px;}
+.person-tabs-arrow.is-end .icon {transform: rotate(-90deg);}
 .person-body {display: flex; flex-direction: column; gap: 20px; padding: 16px 24px 32px;}
 .person-stats {display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; margin: 0;}
 .person-stats > div {display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; min-width: 0;}
@@ -180,9 +194,13 @@
   .person-drawer.drawer {width: 100vw; height: 100dvh; border-radius: 0;}
   .person-hero, .person-body {padding-left: 16px; padding-right: 16px;}
   .person-tabs {padding: 0 16px;}
+  .person-tabs-arrow {width: 32px; height: 32px; margin-top: -17px;}
+  .person-tabs-arrow.is-start {left: 8px;}
+  .person-tabs-arrow.is-end {right: 8px;}
   .person-facts {grid-template-columns: minmax(0, 1fr);}
 }
 @media (prefers-reduced-motion: reduce) {
   .people-collapse .icon {transition: none;}
+  .person-tabs .tabs {scroll-behavior: auto;}
 }
 .people-sort[data-dir="asc"] .icon {transform: rotate(180deg);}
