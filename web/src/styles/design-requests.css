@@ -273,6 +273,7 @@
 .dlinks--full {gap:8px;flex-wrap:wrap;}
 .dlinks--full .dlink {width:auto;height:36px;display:inline-flex;gap:8px;padding:0 12px;border-radius:10px;font-size:13px;font-weight:500;color:var(--text);}
 .dlinks--full .dlink.is-off {color:var(--muted);}
+.dlinks--full .dlink {white-space:nowrap;}
 .dlink-sub {font-size:12px;font-weight:400;color:var(--muted);}
 
 /* Detail: lane steps, design links and the next step. */
@@ -321,7 +322,7 @@
   #design-detail .drawer-head {padding-top:10px;}
   .design-next {flex:1 1 100%;margin-left:0;min-height:44px;justify-content:center;}
   .dlinks--full {width:100%;}
-  .dlinks--full .dlink-wrap {flex:1 1 140px;min-width:0;}
+  .dlinks--full .dlink-wrap {flex:1 1 100%;min-width:0;}
   .dlinks--full .dlink {width:100%;min-height:44px;justify-content:center;}
   .design-type {width:auto;}
   .design-type .select {flex:none;}

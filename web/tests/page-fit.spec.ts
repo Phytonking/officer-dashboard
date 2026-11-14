@@ -47,7 +47,7 @@ test('StatRow tiles are styled like a Home widget card', async ({ page }) => {
     return { radius: cs.borderRadius, border: cs.borderTopWidth + cs.borderTopStyle + cs.borderTopColor, shadow: cs.boxShadow, padding: cs.padding, title: getComputedStyle(el.querySelector('.wc-title')!).fontSize };
   });
   const home = await style(card);
-  for (const path of ['/events', '/finance', '/buildspace', '/settings']) {
+  for (const path of ['/events', '/finance', '/buildspace-launchpad', '/settings']) {
     await page.goto(path);
     await settle(page);
     const tiles = page.locator('[data-stat-row] .stat-tile');

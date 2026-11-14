@@ -225,6 +225,7 @@ for (const theme of THEMES) {
 }
 
 test('legacy Buildspace links preserve the selected person', async ({ page }) => {
+  test.skip(!process.env.WEB_ORIGIN, 'the /buildspace 301 lives in the Go server; astro dev has no redirect');
   await devLogin(page, 'director');
   await page.goto('/buildspace?person=bs-person-01');
   await expect(page).toHaveURL(/\/buildspace-launchpad\?person=bs-person-01/);
