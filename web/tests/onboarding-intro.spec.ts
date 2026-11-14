@@ -3,17 +3,17 @@ import { devLoginSkipTour, devSignIn } from './helpers';
 import { letterCells, WORD_PATH } from '../src/ui/onboarding/snakePlan';
 
 /**
- * V0.10 hello screen: the multilingual greeting in glass letters over changing colour, no start
- * button (a click, a tap or any key starts), the group-photo slot, the arcade snake whose body
- * ends up spelling "cseed", the hand-off onto the shell logo at every width, the reduced-motion
- * and Skip paths, and the media fallbacks. The planner itself is unit-tested in
+ * V0.10/V0.11 hello screen: the multilingual greeting on the app's plain background (no colour
+ * wash, no video), no start button (a click, a tap or any key starts), the group-photo slot, the
+ * arcade snake whose body ends up writing "cseed" (letters only) with a sapling sprouting after
+ * it, the hand-off onto the shell logo at every width, the reduced-motion and Skip paths. The planner itself is unit-tested in
  * onboarding-snake.spec.ts. Needs the Go server with DEV_AUTH=1.
  *
  * INTRO_FRAMES=<dir> also saves a frame sequence of the animation (used for the PR).
  */
 const discordId = () => `9${String(Date.now()).padStart(13, '0')}${Math.floor(Math.random() * 1e4).toString().padStart(4, '0')}`;
 
-/** The real app shell's logo (sidebar wordmark, the rail's C mark, or the phone top bar), measured on Home. */
+/** The real app shell's logo (sidebar wordmark, the rail's sapling mark, or the phone top bar), measured on Home. */
 const shellLogo = (page: Page) =>
   page.evaluate(() => {
     const el = Array.from(document.querySelectorAll('.topbar .wordmark-logo, .sidebar .wordmark-logo, .sidebar .wordmark-mark')).find((e) => {
@@ -84,7 +84,7 @@ const landing = (page: Page) =>
     return { intro: [parseFloat(lg.style.left), parseFloat(lg.style.top), w, parseFloat(lg.style.height)], page: [p.left, p.top, p.width, p.height], kind: lg.dataset.kind, end: last?.transform, opacity: last?.opacity };
   });
 
-test('the greeting cycles through languages in glass letters, with no start button', async ({ page }) => {
+test('the greeting cycles through languages on a plain background, with no start button', async ({ page }) => {
   await openIntro(page);
   const langs = new Set<string>();
   await expect(active(page)).toHaveCount(1);
@@ -101,19 +101,30 @@ test('the greeting cycles through languages in glass letters, with no start butt
   await expect(arabic).toHaveAttribute('dir', 'rtl');
   await expect(arabic.locator('.wi-cs')).toHaveAttribute('dir', 'ltr');
   await expect(page.locator('.wi p.visually-hidden')).toHaveText('Hello, welcome to cseed');
-  // Glass type: a translucent fill clipped to the letters, never a solid colour.
-  const fill = await active(page).locator('.wi-text').evaluate((e) => ({ color: getComputedStyle(e).color, clip: getComputedStyle(e).backgroundClip }));
-  expect(fill.color).toBe('rgba(0, 0, 0, 0)');
-  expect(fill.clip).toBe('text');
+  // V0.11: solid ink type on the app's own background, the same tokens as the shell (light here).
+  const look = await page.evaluate(() => {
+    const css = getComputedStyle(document.documentElement);
+    const probe = document.createElement('i');
+    document.body.appendChild(probe);
+    const tok = (v: string) => ((probe.style.color = css.getPropertyValue(v)), getComputedStyle(probe).color);
+    const out = { bg: tok('--bg'), text: tok('--text'), wi: getComputedStyle(document.querySelector('.wi')!).backgroundColor, layer: getComputedStyle(document.querySelector('.wi-bg')!).backgroundImage, type: getComputedStyle(document.querySelector('[data-wi-phrase][data-active="true"] .wi-text')!).color };
+    probe.remove();
+    return out;
+  });
+  expect(look.wi).toBe(look.bg);
+  expect(look.layer).toBe('none');
+  expect(look.type).toBe(look.text);
   // The only button is Skip; the overlay itself is the labelled control.
   await expect(overlay(page).getByRole('button')).toHaveCount(1);
   await expect(page.getByRole('button', { name: 'Skip' })).toBeVisible();
   await expect(page.getByRole('button', { name: /continue|start|begin/i })).toHaveCount(0);
   await expect(page.getByRole('dialog', { name: /press any key, click or tap anywhere/i })).toBeVisible();
-  // The colour changes: a new wash fades in about every 1.2s.
-  const washes = async () => page.locator('.wi-wash').evaluateAll((els) => els.map((e) => (e as HTMLElement).style.background).join('|'));
-  const w0 = await washes();
-  await expect.poll(washes, { timeout: 4000 }).not.toBe(w0);
+  // No colour wash and no video, before or after the click.
+  await expect(page.locator('.wi video, .wi-wash, .wi-washes, .wi-fallback')).toHaveCount(0);
+  await overlay(page).click({ position: { x: 200, y: 300 } });
+  await expect(overlay(page)).toHaveAttribute('data-state', 'playing');
+  await expect(page.locator('.wi video, .wi-wash, .wi-washes, .wi-fallback')).toHaveCount(0);
+  expect(await overlay(page).evaluate((e) => getComputedStyle(e).backgroundColor)).toBe(look.bg);
 });
 
 test('the photo and the grid reveal from nothing; the exit fade does not jump them to full', async ({ page }) => {
@@ -142,24 +153,26 @@ test('a click shows the group photo and starts the snake, whose body ends up spe
   await expect(photo.locator('img')).toHaveAttribute('src', '/media/hello-group-placeholder.svg');
   await expect.poll(() => photo.evaluate((e) => +getComputedStyle(e).opacity)).toBeGreaterThan(0.95);
   await expect(page.locator('[data-wi-snake="head"]')).toHaveCount(1);
-  await expect.poll(() => page.locator('[data-wi-apple]').count()).toBe(WORD_PATH.length - 6);
+  // Seeds only on letter cells (the snake's first 6 word cells need none): nothing is laid between letters.
+  await expect.poll(() => page.locator('[data-wi-apple]').count()).toBe(WORD_PATH.slice(6).filter((c) => c.kind === 'letter').length);
 
   await expect(overlay(page)).toHaveAttribute('data-state', 'spelled', { timeout: 30_000 });
-  // The body's cells, tail to head, are exactly the planned word path; letter cells vs joins as planned.
-  const cells = await page.locator('[data-wi-snake]').evaluateAll((els) =>
-    (els as HTMLElement[]).filter((e) => e.style.opacity === '1').map((e) => ({ cell: e.dataset.cell!, kind: e.dataset.kind!, head: e.dataset.wiSnake === 'head' })),
+  // The body is the planned word path, but only its letter cells are drawn: no stray cells between letters.
+  const segs = await page.locator('[data-wi-snake]').evaluateAll((els) =>
+    (els as HTMLElement[]).map((e) => ({ cell: e.dataset.cell!, kind: e.dataset.kind!, head: e.dataset.wiSnake === 'head', shown: e.style.opacity === '1' })),
   );
-  expect(cells).toHaveLength(WORD_PATH.length);
-  const want = new Set(WORD_PATH.map((c) => `${c.x},${c.y}`));
-  expect(new Set(cells.map((c) => c.cell))).toEqual(want);
+  expect(segs).toHaveLength(WORD_PATH.length);
+  expect(new Set(segs.map((c) => c.cell))).toEqual(new Set(WORD_PATH.map((c) => `${c.x},${c.y}`)));
   const letters = letterCells();
-  for (const c of cells) expect(c.kind, c.cell).toBe(letters.has(c.cell) ? 'letter' : 'join');
+  const shown = segs.filter((c) => c.shown);
+  expect(new Set(shown.map((c) => c.cell))).toEqual(letters);
+  for (const c of segs) expect(c.kind, c.cell).toBe(letters.has(c.cell) ? 'letter' : 'lift');
   const last = WORD_PATH[WORD_PATH.length - 1]!;
-  expect(cells.find((c) => c.head)!.cell).toBe(`${last.x},${last.y}`);
-  // Joins are dimmed so the word reads.
-  const join = page.locator('[data-wi-snake][data-kind="join"]').first();
-  await expect.poll(() => join.evaluate((e) => +getComputedStyle(e).opacity)).toBeLessThan(0.3);
-  expect(await join.evaluate((e) => getComputedStyle(e).backgroundColor)).toBe('rgb(20, 20, 20)'); // dimmed by opacity, never by repainting
+  expect(segs.find((c) => c.head)!.cell).toBe(`${last.x},${last.y}`);
+  // The lifts are never painted, at any point (their squares stay at opacity 0).
+  expect(await page.locator('[data-wi-snake][data-kind="lift"]').evaluateAll((els) => els.every((e) => getComputedStyle(e).opacity === '0'))).toBe(true);
+  // A sapling sprouts after the d.
+  await expect.poll(() => page.locator('[data-wi-sprout]').evaluate((e) => +getComputedStyle(e).opacity)).toBeGreaterThan(0.95);
 
   const rects = await landing(page);
   expect(rects.end).toBe('scale(1)');
@@ -233,14 +246,10 @@ test('Skip goes straight to the logo without the snake or the photo', async ({ p
   await expect(page.locator('[data-onb-logo]')).toBeVisible();
 });
 
-test('prefers-reduced-motion: no snake and no colour changes; the photo shows, then a plain fade to the logo', async ({ page }) => {
+test('prefers-reduced-motion: no snake; the photo shows, then a plain fade to the logo', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await openIntro(page);
   await expect(active(page)).toHaveCount(1);
-  const washes = () => page.locator('.wi-wash').evaluateAll((els) => els.map((e) => (e as HTMLElement).style.background).join('|'));
-  const w0 = await washes();
-  await page.waitForTimeout(2600);
-  expect(await washes()).toBe(w0);
   // The photo fades in from nothing (review F-1: the exit fade used to show it at once).
   const t0 = await startFrozen(page, 'key', 0);
   expect(t0.photo).toBe(0);
@@ -248,23 +257,27 @@ test('prefers-reduced-motion: no snake and no colour changes; the photo shows, t
   await expect.poll(() => page.locator('[data-wi-photo]').evaluate((e) => +getComputedStyle(e).opacity)).toBeGreaterThan(0.95);
   await expect(page.locator('[data-wi-snake]')).toHaveCount(0);
   await expect(page.locator('[data-wi-apple]')).toHaveCount(0);
+  await expect(page.locator('[data-wi-sprout]')).toHaveCount(0);
   await expect(overlay(page)).toHaveCount(0, { timeout: 5000 });
   await expect(page.locator('[data-onb-logo]')).toBeVisible();
 });
 
-test('missing media: no video element, the animated gradient instead, and the photo placeholder', async ({ page }) => {
+test('missing photo: the placeholder, and no other media is fetched', async ({ page }) => {
   const media: string[] = [];
   page.on('request', (r) => r.url().includes('/media/') && media.push(new URL(r.url()).pathname));
   await openIntro(page);
-  await expect(overlay(page)).toHaveAttribute('data-video', 'off');
-  await expect(page.locator('[data-wi-video]')).toHaveCount(0);
-  await expect(page.locator('[data-wi-fallback]')).toBeVisible();
   await expect(overlay(page)).toHaveAttribute('data-photo', 'placeholder');
-  // Nothing asks for the missing files (no 404s): only the placeholder is fetched.
+  // Nothing asks for missing files (no 404s) and there is no video any more: only the placeholder is fetched.
   expect(media.filter((m) => !m.endsWith('/hello-group-placeholder.svg'))).toEqual([]);
-  // Glass that does not need refraction is still glass: a blurred backdrop on Skip.
-  const skip = await page.getByRole('button', { name: 'Skip' }).evaluate((e) => getComputedStyle(e).backdropFilter);
-  expect(skip).toContain('blur(');
+});
+
+test('dark theme: the intro uses the dark tokens', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await openIntro(page);
+  await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
+  const c = await page.evaluate(() => ({ wi: getComputedStyle(document.querySelector('.wi')!).backgroundColor, type: getComputedStyle(document.querySelector('[data-wi-phrase] .wi-text')!).color }));
+  expect(c.wi).toBe('rgb(24, 26, 24)');
+  expect(c.type).toBe('rgb(238, 239, 235)');
 });
 
 // QA Q-1: the logo hand-off lines up with the real shell at the tablet edges and on phones.
