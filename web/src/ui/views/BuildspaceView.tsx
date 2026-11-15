@@ -39,9 +39,6 @@ export default function BuildspaceView({ me }: { me: CurrentUser }) {
   return (
     <div class="buildspace">
       <div class="bs-intro">
-        <div>
-          <span class="brand-eyebrow">THE BUILDER REGISTER</span>
-        </div>
         <div class="action-row">
           <ScheduleMenu
             schedule={state.status === "ready" ? state.data.schedule : null}

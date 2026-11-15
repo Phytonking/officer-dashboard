@@ -7,6 +7,7 @@ import { devSignIn, settle } from './helpers';
  * tiles above the board, a card low in a busy column was dragged sideways into empty space
  * below (or, once scrolled, entirely below) the short target column, so the drop did nothing.
  */
+const lane = (page: Page, l: 'todo' | 'doing' | 'review' | 'done') => page.locator(`.lane[data-lane="${l}"]`);
 async function create(page: Page, title: string) {
   const res = await page.request.post('/api/design-requests', { data: { title, type: 'poster', brief: 'Drag regression brief.' } });
   expect(res.ok()).toBe(true);
@@ -45,6 +46,50 @@ test('dragging a design card straight across into another stage moves it on the 
     await expect(column.locator(`[data-request="${id}"]`)).toBeVisible();
   } finally {
     for (const id of ids) await page.request.delete(`/api/design-requests/${id}`);
+  }
+});
+
+test('at 820 and 1280 all four lanes are on screen and a mouse drag into Done works', async ({ page }, info) => {
+  test.skip(info.project.name !== 'desktop', 'a mouse drag at 820 wide; the tablet project is touch-only');
+  await page.setViewportSize({ width: 820, height: 1180 });
+  await devSignIn(page, { as: 'leadership' }, '/design');
+  const title = `Tablet drag ${Date.now()}`;
+  const id = await create(page, title);
+  try {
+    expect((await page.request.post(`/api/design-requests/${id}/move`, { data: { stage: 'in-review' } })).ok()).toBe(true);
+    await page.goto('/design?view=board');
+    await settle(page);
+    // Every lane sits inside the board and the viewport (2 x 2 here), at 820 and on a 1280 laptop
+    // with the sidebar; what users see, not scrollWidth (a hidden tooltip can poke past the edge).
+    for (const width of [1280, 820]) {
+      await page.setViewportSize({ width, height: 1180 });
+      const vw = await page.evaluate(() => window.innerWidth);
+      const board = (await page.locator('.board-lanes').boundingBox())!;
+      for (const l of ['todo', 'doing', 'review', 'done'] as const) {
+        const box = (await lane(page, l).boundingBox())!;
+        expect(box.x, `${l} left edge at ${width}`).toBeGreaterThanOrEqual(board.x - 0.5);
+        expect(box.x + box.width, `${l} right edge at ${width}`).toBeLessThanOrEqual(Math.min(board.x + board.width, vw) + 0.5);
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `no page overflow at ${width}`).toBe(true);
+    }
+
+    // The card waits in Review, the lane beside Done, so both are on screen for the drag.
+    const card = page.locator(`[data-request="${id}"]`);
+    const grip = card.getByRole('button', { name: `Drag ${title}`, exact: true });
+    await grip.scrollIntoViewIfNeeded();
+    const from = (await grip.boundingBox())!;
+    const done = (await lane(page, 'done').boundingBox())!;
+    const moved = page.waitForResponse((r) => r.url().endsWith(`/api/design-requests/${id}/move`) && r.request().method() === 'POST');
+    page.once('dialog', (dialog) => dialog.accept()); // leadership confirms a delivery
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(done.x + done.width / 2, done.y + 120, { steps: 20 });
+    await page.mouse.up();
+    expect((await moved).ok()).toBe(true);
+    await expect.poll(() => serverStage(page, id)).toBe('delivered');
+    await expect(lane(page, 'done').locator(`[data-request="${id}"]`)).toBeVisible();
+  } finally {
+    await page.request.delete(`/api/design-requests/${id}`);
   }
 });
 

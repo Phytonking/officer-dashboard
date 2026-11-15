@@ -63,7 +63,7 @@ export function StatTile({ label, value, sub, href, loading, alert, pressed, pla
 /** A row of 3–4 summary tiles at the top of a page. Wraps to two columns on phones. */
 export function StatRow({ tiles, label = 'Summary' }: { tiles: StatTileData[]; label?: string }) {
   return (
-    <section class="stat-tiles" aria-label={label} data-stat-row>
+    <section class="stat-tiles" aria-label={label} data-stat-row data-count={tiles.length}>
       {tiles.map((t) => (
         <StatTile key={t.label} {...t} />
       ))}

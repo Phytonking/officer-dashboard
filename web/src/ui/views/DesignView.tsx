@@ -827,7 +827,7 @@ function UpcomingRail({
     <section class="design-rail" aria-labelledby="design-rail-title" data-rail>
       <div class="design-rail-head">
         <h2 class="design-rail-title" id="design-rail-title">
-          Upcoming events <span class="brand-eyebrow">next six weeks</span>
+          Upcoming events
         </h2>
         {events.length > 0 && (
           <p class="design-rail-note">
