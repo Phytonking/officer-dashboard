@@ -353,6 +353,23 @@ test('drawer shows Joined as a formatted date and the check-in chip carries its 
   }
 });
 
+test('Log check-in jumps to the Add entry tab, primary while the check-in is missing', async ({ page }) => {
+  const errors = watchErrors(page);
+  await devLogin(page, 'officer');
+  await open(page, '/buildspace-launchpad?person=bs-person-01');
+  const drawer = page.locator('#buildspace-person');
+  const log = drawer.locator('[data-person-action="log-checkin"]');
+  await expect(log).toHaveText('Log check-in');
+  const missed = (await drawer.locator('[data-checkin]').getAttribute('data-checkin')) === 'missed';
+  await expect(log).toHaveClass(missed ? /btn--primary/ : /^(?!.*btn--primary)/);
+  await log.click();
+  const tab = drawer.getByRole('tab', { name: 'Add entry' });
+  await expect(tab).toHaveAttribute('aria-selected', 'true');
+  await expect(tab).toBeInViewport();
+  await expect(drawer.getByLabel('Entry type')).toHaveValue('weekly');
+  expect(errors).toEqual([]);
+});
+
 test('cards use the officer card style in every grouping, open the drawer, and fit the page', async ({ page }) => {
   const errors = watchErrors(page);
   await devLogin(page, 'director');
