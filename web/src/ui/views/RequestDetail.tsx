@@ -80,7 +80,7 @@ export default function RequestDetail({
       <RequestSummary r={r} />
 
       <div class="stack">
-        <SettlementHoldNotice hold={r.settlementHold} />
+        <SettlementHoldNotice hold={r.settlementHold} canSettle={r.allowedTransitions.some((t) => t === 'fulfilled' || t === 'reimbursed')} maxCents={r.maxSettlementCents} />
         {(created || uploadFailed > 0 || notice) && (
           <div class="notice-stack" ref={statusRef} tabIndex={-1} data-status-region>
             {created === 'submitted' && <Notice tone="positive">Submitted. A director has been notified and will review it.</Notice>}

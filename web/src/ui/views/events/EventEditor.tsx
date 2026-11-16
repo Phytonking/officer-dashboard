@@ -118,7 +118,16 @@ function EditorForm({
   // Ruling an event out of design is director+ or the host's call (the server checks the saved host).
   const canSkipDesign = isDirector(user) || (!!user && (event ? event.host?.id === user.id : d.hostUserId === user.id));
   const savedNeed = event?.designNeed ?? 'unknown';
-  const set = (k: keyof Draft) => (e: Event) => setD({ ...d, [k]: (e.currentTarget as HTMLInputElement).value });
+  const hostTouched = useRef(false);
+  const set = (k: keyof Draft) => (e: Event) => {
+    if (k === 'hostUserId') hostTouched.current = true;
+    setD({ ...d, [k]: (e.currentTarget as HTMLInputElement).value });
+  };
+  // Whoever creates an event usually hosts it: preselect them (they can pick someone else or
+  // "No one yet"), which also lets them rule the event out of design without a director.
+  useEffect(() => {
+    if (!event && user && !hostTouched.current) setD((cur) => (cur.hostUserId ? cur : { ...cur, hostUserId: user.id }));
+  }, [event, user?.id]);
 
   useEffect(() => {
     if (!cover) return setPreview(null);

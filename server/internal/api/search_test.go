@@ -79,7 +79,7 @@ func TestSearchShowsUsersAndAccountsOnlyToDirectors(t *testing.T) {
 			user = m
 		}
 	}
-	if user["title"] != "Priya Shah" || user["subtitle"] != "VP Events · officer · priya@example.org" || user["href"] != "/admin" {
+	if user["title"] != "Priya Shah" || user["subtitle"] != "VP Events · officer · priya@example.org" || user["href"] != "/officers?person=user-priya" {
 		t.Errorf("user hit %v", user)
 	}
 	// By email, case-insensitively.

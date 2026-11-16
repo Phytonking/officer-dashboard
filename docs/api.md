@@ -161,7 +161,7 @@ literal) against:
 | `event` | officers, directors | name, location, Luma id | name / `<Pacific date> · <location>` | `/events?id=<id>` |
 | `request` | officers, directors | number, title, vendor | title / `<number> · <vendor> · <status>` | `/finance?id=<id>` |
 | `contact` | all officers | name, organization, role, email, topics | name / `<org> · <role> · <type>` | `/contacts?id=<id>` |
-| `user` | directors only | name, email, title | name / `<title> · <role> · <email>` | `/admin` |
+| `user` | directors only | name, email, title | name / `<title> · <role> · <email>` | `/officers?person=<id>` |
 | `account` | directors only | code, name | `<code> <name>` / account type | `/finance?tab=reports&report=trial-balance` |
 
 Results are ordered best match first (the primary field starts with the query, then contains
