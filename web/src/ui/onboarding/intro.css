@@ -1,49 +1,188 @@
-/* Onboarding hello screen (V0.10 arcade snake; V0.11: a plain, calm background in the app's own
-   tokens, light and dark, with no colour wash or video). Motion is transform + opacity only. */
-.wi {position:fixed;inset:0;z-index:200;overflow:hidden;cursor:pointer;color:var(--text);background:var(--bg);font-family:var(--font-brand, system-ui), 'Noto Sans', system-ui, sans-serif;-webkit-tap-highlight-color:transparent;user-select:none;}
+/* Onboarding hello screen (V0.12). A liquid-glass "Hello, welcome to cseed" over a looping video (or
+   its stand-in), in 15 languages. A press anywhere fades the sentence away onto the page's own paper
+   and the glass word cseed glides into the logo's corner, where it becomes the real wordmark
+   (revision 2, D-27/D-28). Everything that moves per frame moves by transform or opacity only. */
+
+/* ── Fonts: tiny subsets holding only the glyphs of the 15 greetings (public/fonts/hello/, OFL), one
+   family split by script, so every device shows the same type at the same weight and no script
+   falls back to a random system font. Only the scripts on screen are downloaded. ── */
+@font-face {font-family:'cseed Hello';src:url('/fonts/hello/hello-poppins.woff2') format('woff2');font-weight:500;font-style:normal;font-display:block;
+  unicode-range:U+0000-024F, U+0300-036F, U+0900-097F, U+1E00-1EFF, U+2000-206F, U+A8E0-A8FF;}
+@font-face {font-family:'cseed Hello';src:url('/fonts/hello/hello-cyrillic.woff2') format('woff2');font-weight:500;font-style:normal;font-display:swap;unicode-range:U+0400-04FF;}
+@font-face {font-family:'cseed Hello';src:url('/fonts/hello/hello-arabic.woff2') format('woff2');font-weight:500;font-style:normal;font-display:swap;unicode-range:U+0600-06FF, U+FB50-FDFF, U+FE70-FEFF;}
+@font-face {font-family:'cseed Hello';src:url('/fonts/hello/hello-sc.woff2') format('woff2');font-weight:500;font-style:normal;font-display:swap;unicode-range:U+3002, U+4E00-9FFF, U+FF0C;}
+@font-face {font-family:'cseed Hello';src:url('/fonts/hello/hello-jp.woff2') format('woff2');font-weight:500;font-style:normal;font-display:swap;unicode-range:U+3001, U+3040-30FF;}
+@font-face {font-family:'cseed Hello';src:url('/fonts/hello/hello-kr.woff2') format('woff2');font-weight:500;font-style:normal;font-display:swap;unicode-range:U+1100-11FF, U+3130-318F, U+AC00-D7AF;}
+
+/* ── The overlay. It has no background of its own: the paper (the page's colour) sits under the backdrop. ── */
+.wi {position:fixed;inset:0;z-index:200;overflow:hidden;cursor:pointer;touch-action:none;color:#fff;
+  -webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none;
+  /* The wordmark's ink for the theme (ink on light, near-white on dark). */
+  --wi-ink:var(--brand-ink, #141414);}
 .wi:focus {outline:none;}
-.wi-bg {position:absolute;inset:0;background:var(--bg);}
+.wi-paper {position:absolute;inset:0;background:var(--paper, var(--bg));will-change:opacity;}
+/* While the intro is up, the page's own logo is hidden: the intro's logo stands in its exact box, so the
+   two are never drawn at once. Both switch in the same frame when the overlay unmounts. */
+.onb--intro .onb-shell-logo {visibility:hidden;}
+/* Hidden before the first paint when it may not be wanted (introEarly.ts, R-4). */
+.wi-off .wi {display:none;}
 
-/* ── The greeting: solid ink type on the page background ── */
-.wi-stage, .wi-fx, .wi-board, .wi-snake {position:absolute;inset:0;pointer-events:none;}
-.wi-phrase {position:absolute;inset:0;display:grid;place-items:center;margin:0;padding:0 6vw;text-align:center;opacity:0;will-change:opacity, transform;}
-.wi-text {display:block;max-width:92vw;font-weight:600;font-size:clamp(32px, 7vw, 96px);line-height:1.08;letter-spacing:-.035em;text-wrap:balance;color:var(--text);}
-.wi-phrase[lang="ar"] .wi-text, .wi-phrase[lang="hi"] .wi-text {letter-spacing:0;line-height:1.3;}
-.wi-cs {display:inline-block;direction:ltr;unicode-bidi:isolate;letter-spacing:-.04em;}
-.wi-slice {position:absolute;top:0;bottom:0;overflow:hidden;pointer-events:none;will-change:opacity, transform;}
-.wi-slice > .wi-phrase {opacity:1;right:auto;}
+/* ── Backdrop: the stand-in gradient, the poster, the video, then a contrast scrim for the glass. The
+   whole stack is the same in light and dark; the melt fades it to the paper. ── */
+.wi-backdrop {position:absolute;inset:0;overflow:hidden;background:#0f1d19;will-change:opacity;}
+.wi-standin {position:absolute;inset:-25%;
+  background:
+    radial-gradient(38% 42% at 28% 34%, #1f7a5c 0%, rgb(31 122 92 / 0) 70%),
+    radial-gradient(44% 40% at 72% 62%, #2b4f9e 0%, rgb(43 79 158 / 0) 70%),
+    radial-gradient(32% 34% at 63% 24%, #5d3d99 0%, rgb(93 61 153 / 0) 70%),
+    radial-gradient(40% 38% at 24% 76%, #3b8f2f 0%, rgb(59 143 47 / 0) 70%),
+    #10211c;
+  animation:wi-drift 26s ease-in-out infinite alternate;}
+@keyframes wi-drift {
+  from {transform:translate3d(-3%, -2%, 0) rotate(-4deg) scale(1);}
+  to {transform:translate3d(3%, 2.5%, 0) rotate(5deg) scale(1.08);}
+}
+.wi-backdrop[data-still] .wi-standin {animation-play-state:paused;}
+.wi-poster, .wi-video {position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:50% 50%;display:block;}
+.wi-video {opacity:0;}
+.wi-scrim {position:absolute;inset:0;background:radial-gradient(ellipse 78% 46% at 50% 50%, rgb(0 0 0 / .36), rgb(0 0 0 / .14) 72%, rgb(0 0 0 / .2));}
 
-/* ── The group photo: a floating card ── */
-.wi-photo {position:absolute;inset:max(84px, 12vh) max(16px, 9vw);margin:0;border-radius:28px;overflow:hidden;opacity:0;background:var(--sunken);
-  box-shadow:0 0 0 1px var(--line), 0 40px 90px -40px rgb(20 20 20 / .35);will-change:opacity, transform;}
-.wi-photo img {display:block;width:100%;height:100%;object-fit:cover;}
-@media (max-width: 767px) {.wi-photo {inset:22% 16px;border-radius:22px;}}
+/* ── The greeting: a fixed-height band (room for three lines) in the middle, so its box never changes
+   between languages; two slots take turns (the shown one and the next one). ── */
+.wi-greet {--wi-fs:clamp(30px, 6.2vw, 88px);position:absolute;left:0;right:0;top:50%;height:calc(var(--wi-fs) * 1.3 * 3);
+  transform:translateY(-50%);pointer-events:none;}
+/* Each slot is its own layer: its glass (with its filters) is painted once, then faded and moved by the compositor. */
+.wi-slot {position:absolute;inset:0;display:flex;align-items:center;justify-content:center;margin:0;padding:0 5vw;text-align:center;opacity:0;will-change:opacity, transform;}
+.wi-slot[data-front] {opacity:1;}
+/* A definite width (rounded to 5px, so the light band's 40% window and its 250% copy of the words come out exact):
+   the face and the copy inside the light band then break their lines identically. */
+.wi-text {position:relative;display:block;flex:none;width:min(90vw, 15em);width:round(down, min(90vw, 15em), 5px);font:500 var(--wi-fs)/1.3 'cseed Hello', system-ui, sans-serif;font-synthesis:none;
+  letter-spacing:-.02em;text-wrap:balance;}
+.wi-slot:is([lang="ar"], [lang="hi"], [lang="ja"], [lang="ko"], [lang="zh-Hans"]) .wi-text {letter-spacing:0;}
 
-/* ── The arcade board, the snake and its seeds ── */
-.wi-board {opacity:0;background-image:radial-gradient(circle, var(--line) 1.3px, transparent 1.7px);background-size:var(--wi-c, 32px) var(--wi-c, 32px);}
-.wi-snake, .wi-word {transform-origin:0 0;will-change:transform, opacity;}
-.wi-word {position:absolute;inset:0;}
-.wi {--wi-ink:#1d1d1b;} /* the wordmark image's ink: the snake's colour over the light photo card, in both themes */
-.wi-seg {position:absolute;left:0;top:0;background:var(--wi-ink);border-radius:var(--wi-r, 3px);opacity:0;will-change:transform;}
-.wi-seg--head {z-index:2;}
-/* Once "cseed" is written, WelcomeIntro squares the letter cells and rounds the outer corner where a stroke turns. */
-.wi-word--themed {opacity:0;}
-.wi-word--themed .wi-seg {background:var(--text);}
-.wi-eye {position:absolute;right:18%;width:20%;height:20%;background:#fff;border-radius:1px;}
-.wi-eye--l {top:18%;}
-.wi-eye--r {bottom:18%;}
-/* Seeds: small sapling-green ovals laid along the letters. */
-.wi-apple {position:absolute;left:0;top:0;border-radius:50% 50% 50% 50% / 60% 60% 40% 40%;background:var(--sapling-leaf, #82c61b);box-shadow:inset 0 -2px 0 rgb(0 0 0 / .14);opacity:0;will-change:transform, opacity;}
-/* The sapling that sprouts after the d; it grows from the bottom of its stem. */
-.wi-sprout {position:absolute;left:0;top:0;opacity:0;transform-origin:50% 86%;will-change:transform, opacity;}
-.wi-sprout .sapling {display:block;width:100%;height:100%;}
+/* ── Liquid glass (O-1). The face is a slab of glass in the shape of the letters:
+   - its fill is translucent and carries the backdrop's own colours, flipped and magnified as through a
+     lens (the stand-in's greens, blues and violet; with a poster, the poster itself, --wi-refract);
+   - a bright specular line under the top edge and a lit caustic near the baseline give it thickness;
+   - a rim of light on the upper edges and a darker lower edge (the slab's thickness) lift it off the backdrop.
+   No backdrop-filter, no SVG lighting and no large blurred shadow (L-7: in software rendering a lighting
+   filter stalled raster for 200–400 ms at each language change, and a 26px shadow blur under the moving
+   light band cost 20–45 ms frames); two crisp drop-shadows, painted once per phrase. ── */
+.wi-face {display:block;
+  filter:drop-shadow(0 -1px 0 rgb(255 255 255 / .7)) drop-shadow(0 2.5px 1px rgb(4 18 14 / .55));}
+.wi-glass {color:transparent;padding:.3em .04em;
+  background-image:
+    linear-gradient(180deg, rgb(255 255 255 / 0) 25%, rgb(255 255 255 / 1) 29.5%, rgb(255 255 255 / .3) 36%, rgb(255 255 255 / 0) 46%,
+      rgb(255 255 255 / 0) 62%, rgb(255 255 255 / .55) 70%, rgb(255 255 255 / 0) 76%),
+    linear-gradient(112deg, rgb(255 255 255 / 0) 38%, rgb(255 255 255 / .5) 44%, rgb(255 255 255 / 0) 47%, rgb(255 255 255 / 0) 52%, rgb(255 255 255 / .28) 55%, rgb(255 255 255 / 0) 58%),
+    var(--wi-refract, linear-gradient(transparent, transparent)),
+    radial-gradient(42% 70% at 72% 64%, rgb(80 220 165 / .72), rgb(80 220 165 / 0) 72%),
+    radial-gradient(46% 66% at 28% 40%, rgb(104 150 255 / .7), rgb(104 150 255 / 0) 72%),
+    radial-gradient(34% 60% at 40% 74%, rgb(180 132 255 / .6), rgb(180 132 255 / 0) 72%),
+    radial-gradient(40% 64% at 80% 30%, rgb(124 224 112 / .5), rgb(124 224 112 / 0) 72%),
+    linear-gradient(180deg, rgb(255 255 255 / .66) 24%, rgb(255 255 255 / .36) 44%, rgb(255 255 255 / .3) 58%, rgb(255 255 255 / .56) 76%);
+  background-size:100% 100%, 100% 100%, 260% auto, 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%;
+  background-position:0 0, 0 0, 62% 38%, 0 0, 0 0, 0 0, 0 0, 0 0;
+  background-repeat:no-repeat;
+  -webkit-background-clip:text;background-clip:text;-webkit-box-decoration-break:clone;box-decoration-break:clone;}
+/* ── The word cseed (rev2): in every language it is drawn in the wordmark's own letter shapes, as glass.
+   It is a box with the lettering's proportions (x 0–471 of the 640×147 cseed-logo artwork, the same
+   span the timeline lands on), filled with the glass paint and masked by the artwork's letters, so the
+   word that glides into the corner is exactly the shape of the logo it becomes. Its text stays in the
+   DOM at size 0 (out of the sentence's glass clip), and its border box is the letters' box: the
+   timeline measures it. Its bottom sits on the baseline (overflow:hidden), its top at the ascender. ── */
+.wi-cs {--wi-cs-h:calc(var(--wi-fs, 64px) * .75);direction:ltr;unicode-bidi:isolate;display:inline-block;overflow:hidden;vertical-align:baseline;
+  height:var(--wi-cs-h);width:calc(var(--wi-cs-h) * 471 / 147);margin:0 calc(var(--wi-fs, 64px) * .03);font-size:0;line-height:0;letter-spacing:0;
+  color:transparent;-webkit-background-clip:border-box;background-clip:border-box;
+  -webkit-mask:url('/images/cseed-logo.png') 0 0 / 135.881% 100% no-repeat;mask:url('/images/cseed-logo.png') 0 0 / 135.881% 100% no-repeat alpha;}
+/* The glass, as in the sentence (the lens colours fall across the word's own box). */
+.wi-face .wi-cs, .wi-word-glass {
+  background-image:
+    linear-gradient(180deg, rgb(255 255 255 / 0) 20%, rgb(255 255 255 / 1) 25%, rgb(255 255 255 / .3) 34%, rgb(255 255 255 / 0) 45%,
+      rgb(255 255 255 / 0) 64%, rgb(255 255 255 / .55) 76%, rgb(255 255 255 / 0) 84%),
+    linear-gradient(112deg, rgb(255 255 255 / 0) 30%, rgb(255 255 255 / .55) 38%, rgb(255 255 255 / 0) 42%, rgb(255 255 255 / 0) 60%, rgb(255 255 255 / .3) 64%, rgb(255 255 255 / 0) 68%),
+    var(--wi-refract, linear-gradient(transparent, transparent)),
+    radial-gradient(42% 70% at 72% 64%, rgb(80 220 165 / .72), rgb(80 220 165 / 0) 72%),
+    radial-gradient(46% 66% at 28% 40%, rgb(104 150 255 / .7), rgb(104 150 255 / 0) 72%),
+    radial-gradient(34% 60% at 40% 74%, rgb(180 132 255 / .6), rgb(180 132 255 / 0) 72%),
+    radial-gradient(40% 64% at 80% 30%, rgb(124 224 112 / .5), rgb(124 224 112 / 0) 72%),
+    linear-gradient(180deg, rgb(255 255 255 / .66) 18%, rgb(255 255 255 / .36) 42%, rgb(255 255 255 / .3) 60%, rgb(255 255 255 / .58) 86%);
+  background-size:100% 100%, 100% 100%, 260% auto, 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%;
+  background-position:0 0, 0 0, 62% 38%, 0 0, 0 0, 0 0, 0 0, 0 0;background-repeat:no-repeat;}
+.wi-shine .wi-cs {background-image:linear-gradient(180deg, rgb(255 255 255 / 1) 20%, rgb(255 255 255 / .75) 50%, rgb(255 255 255 / .95) 80%);}
+/* Lifted into its own layer at the press: the sentence no longer draws it. */
+.wi-slot[data-lifted] .wi-cs {visibility:hidden;}
 
-/* ── Logo, Skip, hint ── */
-.wi-logo {position:absolute;display:flex;width:max-content;opacity:0;will-change:transform, opacity;}
-.wi-ui {color:var(--text);background:var(--surface);border:1px solid var(--line);box-shadow:0 1px 2px rgb(20 20 20 / .05);}
-.wi-skip {position:absolute;top:calc(20px + env(safe-area-inset-top, 0px));right:clamp(16px, 4vw, 32px);z-index:3;font:inherit;font-size:14px;font-weight:500;border-radius:999px;padding:8px 16px;min-height:40px;cursor:pointer;transition:background-color var(--dur-1, 120ms) ease;}
-.wi-skip:hover {background:var(--hover);}
-.wi-skip:focus-visible {outline:2px solid var(--text);outline-offset:2px;}
-.wi-hint {position:absolute;left:50%;bottom:calc(28px + env(safe-area-inset-bottom, 0px));transform:translateX(-50%);margin:0;padding:7px 14px;border-radius:999px;font-size:13px;letter-spacing:.02em;white-space:nowrap;color:var(--muted);opacity:0;pointer-events:none;}
-.wi-hint-touch {display:none;}
-@media (hover: none) {.wi-hint-touch {display:inline;} .wi-hint-mouse {display:none;}}
+/* ── The lifted word: a fixed, isolated layer in the letters' measured box, moved only by the timeline's
+   transform (origin 0 0, uniform scale) and opacity. Two copies of the masked word fill it: the glass
+   (with the face's rim and shadow) and the same letters in the wordmark's ink, which the glass condenses
+   into as the backdrop fades to the paper (white glass alone would vanish on light paper). ── */
+.wi-word {position:absolute;left:0;top:0;transform-origin:0 0;pointer-events:none;isolation:isolate;will-change:transform, opacity;}
+/* Each copy is its own layer (rasterised once with its mask and filter), so fading one never repaints the word. */
+.wi-word > .wi-cs {position:absolute;inset:0;width:100%;height:100%;margin:0;will-change:opacity;}
+.wi-word-glass {filter:drop-shadow(0 -1px 0 rgb(255 255 255 / .7)) drop-shadow(0 2px 1px rgb(4 18 14 / .55));}
+/* The ink sits above the glass and fades in over it (the glass stays at full strength underneath), so the
+   word's coverage never dips while it turns from glass to ink: the same masks, one over the other. */
+.wi-word-ink {background:var(--wi-ink);z-index:1;}
+/* On light paper the turn happens over a mid-grey (the backdrop half faded): a faint dark edge on the whole
+   word keeps the letters' outline readable there. It is outside the masks, painted once and scaled with the
+   word, so it is a fraction of a pixel by the time the word lands on the logo. Dark paper needs none. */
+:root:not([data-theme="dark"]) .wi-word {filter:drop-shadow(0 0 1px rgb(0 0 0 / .42));}
+
+/* The moving highlight: a soft slanted band of light that glides across the letters once per language.
+   The window (.wi-sheen) moves right while the words inside it (.wi-sheen-in) move left by the same
+   amount, so the words stay exactly over the face and only the light travels; both are transforms. */
+.wi-sheen {position:absolute;top:0;bottom:0;left:0;width:40%;opacity:.9;overflow:hidden;pointer-events:none;
+  -webkit-mask-image:linear-gradient(108deg, transparent 22%, #000 46%, #000 54%, transparent 78%);mask-image:linear-gradient(108deg, transparent 22%, #000 46%, #000 54%, transparent 78%);
+  transform:translateX(-100%);animation:wi-sheen-win 2100ms cubic-bezier(.45, .05, .4, 1) both;will-change:transform;}
+.wi-sheen-in {position:absolute;top:0;left:0;width:250%;height:100%;transform:translateX(40%);
+  animation:wi-sheen-words 2100ms cubic-bezier(.45, .05, .4, 1) both;will-change:transform;}
+.wi-shine {color:transparent;padding:.3em .04em;
+  background-image:linear-gradient(180deg, rgb(255 255 255 / 1) 26%, rgb(255 255 255 / .75) 50%, rgb(255 255 255 / .95) 74%);
+  -webkit-background-clip:text;background-clip:text;-webkit-box-decoration-break:clone;box-decoration-break:clone;}
+/* Hidden (nothing to paint) until its sweep starts, so its paint never lands on the language change itself. */
+@keyframes wi-sheen-win {0%, 21% {transform:translateX(-100%);visibility:hidden;} 22% {transform:translateX(-100%);visibility:visible;} 78%, 100% {transform:translateX(250%);visibility:visible;}}
+@keyframes wi-sheen-words {0%, 22% {transform:translateX(40%);} 78%, 100% {transform:translateX(-100%);}}
+
+/* ── T-1: the word and the landing logo add up during the swap instead of layering. Their opacities are
+   complementary, and over a transparent isolated group "plus-lighter" makes them sum, so the letters'
+   coverage stays at 1 through the swap (one layer over another would cover only 75% at the midpoint).
+   The paper and backdrop stay outside the group. ── */
+.wi-artwork {position:absolute;inset:0;isolation:isolate;pointer-events:none;}
+.wi-artwork > .wi-word, .wi-artwork > .wi-logo {mix-blend-mode:plus-lighter;}
+
+/* ── The landing logo: the page logo's own images in its exact box, faded in by the timeline, never scaled. ── */
+.wi-logo {position:absolute;display:flex;width:max-content;opacity:0;will-change:opacity;}
+/* Its letters and its sapling are two complementary crops of the one image (each in the full image box),
+   so the sapling can fade in on its own and together they are exactly the page's logo. The cut is the one
+   clear column between the d and the sapling (115 of the 156 px image; 471–479 of the 640 px artwork). */
+.wi-logo[data-kind="wordmark"][data-part="letters"] {clip-path:inset(0 25.96% 0 0);}
+.wi-logo[data-kind="wordmark"][data-part="sapling"] {clip-path:inset(0 0 0 74.04%);}
+.wi-logo[data-kind="mark"][data-part="sapling"] {display:none;}
+
+/* ── No glass where it would hurt: high contrast, reduced transparency and forced colours get solid type. ── */
+@media (prefers-contrast: more), (prefers-reduced-transparency: reduce) {
+  .wi-glass {color:#fff;background:none;-webkit-background-clip:border-box;background-clip:border-box;}
+  .wi-face .wi-cs, .wi-word-glass {background:#fff;}
+  .wi-face {filter:drop-shadow(0 2px 3px rgb(0 0 0 / .8));}
+  .wi-sheen {display:none;}
+  .wi-scrim {background:rgb(0 0 0 / .55);}
+}
+@media (forced-colors: active) {
+  .wi-backdrop {display:none;}
+  .wi-paper {background:Canvas;}
+  .wi-glass {color:CanvasText;background:none;-webkit-background-clip:border-box;background-clip:border-box;}
+  .wi-cs, .wi-word-glass, .wi-word-ink {forced-color-adjust:none;background:CanvasText;}
+  .wi-face {filter:none;}
+  .wi-sheen {display:none;}
+}
+@media (prefers-reduced-motion: reduce) {
+  .wi-standin {animation:none;}
+  .wi-sheen {display:none;}
+}
+
+/* Settings › Advanced › Replay welcome intro (D-22, ReplayIntro.tsx): the shell's own logo hides while the
+   intro's logo stands in its exact box, and shows again in the frame the overlay goes. */
+.wi-replay :is(.topbar, .sidebar) :is(.wordmark-logo, .wordmark-mark) {visibility:hidden;}
+/* Once it plays, the light band stops (the phrase is melting). */
+.wi[data-state="playing"] .wi-sheen {display:none;}

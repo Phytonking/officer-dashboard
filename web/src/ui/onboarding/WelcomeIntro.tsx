@@ -1,430 +1,420 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { ACCESSIBLE_GREETING, GREETINGS, type Greeting } from './greetings';
-import { saplingSvg } from '../brand/sapling';
 import { LogoImages } from './LogoMark';
-import { buildPlan, roundCorners, type Plan } from './snakePlan';
+import { buildPlan, retargetPlan, sampleAt, skipPlan, type Box, type Input, type Plan, type Sample, type Target } from './introPlan';
+import { startKey, type EarlyInput } from './introEarly';
 import './intro.css';
 
-/** The group photo, built from what is in `public/media/` (see onboarding.astro and docs/frontend.md). */
+/**
+ * The hello screen's background video, found at build time in `public/media/` (helloMedia.ts,
+ * docs/frontend.md). Without it the stand-in gradient plays in the same layer.
+ */
 export interface HelloMedia {
-  /** The group photo; absent = the placeholder illustration. */
-  photo?: string;
+  /** `/media/hello-loop.mp4`: one short, silent, landscape loop, cropped to fill (object-fit: cover). */
+  video?: string;
+  /** Its first frame as a still, shown until the video plays (and instead of it with reduced motion). */
+  poster?: string;
 }
-export const PHOTO_PLACEHOLDER = '/media/hello-group-placeholder.svg';
 const NO_MEDIA: HelloMedia = {};
 
-/** How long each language stays (ms) and its fades. */
+/** How long each language stays, and its fades; with reduced motion, a slow cross-fade instead. */
 const CYCLE_MS = 2100;
 const FADE_IN = 560;
 const FADE_OUT = 380;
+const REDUCED_CYCLE_MS = 4200;
+const REDUCED_FADE = 900;
 const EASE = 'cubic-bezier(.2, .8, .2, 1)';
-/** Reduced motion: how long the photo stays before the fade to the logo. */
-const REDUCED_HOLD = 1500;
+/** A click that follows a handled pointerup within this many ms is the same press. */
+const SAME_PRESS_MS = 700;
+/**
+ * After the press that starts it, presses within this many ms are the same gesture (a double-click,
+ * a bounce, a tap and a click) and are ignored (R-1). Only a clearly separate press fast-forwards.
+ */
+const SECOND_PRESS_MS = 650;
 
 const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-function Phrase({ g }: { g: Greeting }) {
+function Words({ g, cls }: { g: Greeting; cls: string }) {
   const [before = '', after = ''] = g.text.split('{cseed}');
   return (
-    <p class="wi-phrase" lang={g.lang} dir={g.dir} data-wi-phrase data-lang={g.lang} data-active="false">
+    <span class={cls}>
+      {before}
+      <span class="wi-cs" lang="en" dir="ltr">
+        cseed
+      </span>
+      {after}
+    </span>
+  );
+}
+
+/**
+ * One language in liquid glass: the glass face (a translucent fill that carries the backdrop's colours,
+ * bent as through a lens, with a lit rim, an inner bevel and a cast shadow), and over it a band of light
+ * that glides across the letters. The light is a window that moves while the copy of the words inside
+ * it moves back by the same amount, so the words stay put and only the light travels, on the compositor.
+ */
+function Phrase({ g, front }: { g: Greeting; front: boolean }) {
+  return (
+    <p class="wi-slot" lang={g.lang} dir={g.dir} data-lang={g.lang} data-front={front ? '' : undefined} data-wi-phrase>
       <span class="wi-text">
-        {before}
-        <span class="wi-cs" lang="en" dir="ltr">
-          cseed
+        <span class="wi-face">
+          <Words g={g} cls="wi-glass" />
         </span>
-        {after}
+        <span class="wi-sheen" aria-hidden="true">
+          <span class="wi-sheen-in">
+            <Words g={g} cls="wi-shine" />
+          </span>
+        </span>
       </span>
     </p>
   );
 }
 
 interface Props {
-  /** Called once the intro has finished and its logo sits exactly where the page's logo is. */
+  /** Called once the intro has finished: its logo stands exactly on the page's logo, which takes over in the same frame. */
   onDone: () => void;
-  /** CSS selector of the page's logo, the snake's destination (it may carry `data-kind="mark"`: the rail's sapling). */
+  /** CSS selector of the page's logo, the destination (it may carry `data-kind="mark"`: the rail's sapling). */
   targetSelector?: string;
   media?: HelloMedia;
+  /** The page decided there is no intro after all (a resumed setup): fade out, or finish at once if it is playing. */
+  leaving?: boolean;
+  /** Shown after the account loaded rather than from the first paint (R-4): it fades in. */
+  late?: boolean;
+  /** Measures the destination itself instead of `targetSelector` (the Settings replay lands on the real shell logo). */
+  target?: () => Target | null;
 }
 
-type State = 'greeting' | 'playing' | 'spelled' | 'done';
+type Phase = 'greeting' | 'playing' | 'done';
+type Slots = { a: number; b: number; front: 0 | 1; n: number };
+
+/** Style writes that skip values already set (B-23): most elements change on only a few frames. */
+function makeWriter() {
+  const seen = new WeakMap<HTMLElement, Record<string, string>>();
+  return (el: HTMLElement, prop: string, value: string) => {
+    let m = seen.get(el);
+    if (!m) seen.set(el, (m = {}));
+    if (m[prop] === value) return;
+    m[prop] = value;
+    el.style.setProperty(prop, value);
+  };
+}
+const px = (n: number) => `${Math.round(n * 100) / 100}px`;
+const num = (n: number) => String(Math.round(n * 1000) / 1000);
+const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
 
 /**
- * The first screen of onboarding (V0.10, calmer in V0.11). "Hello, welcome to cseed" cycles
- * through 15 languages on the app's plain background. There is no start button. Any click, tap or
- * key (Tab still moves focus, Escape skips) brings up the group photo and starts an arcade snake.
- * It eats the greeting, eats the seeds laid along the word, writes "cseed" with its body, a
- * sapling sprouts after the d, and the whole wordmark shrinks onto the shell's logo. Pressing
- * again fast-forwards. With reduced motion (or Skip) there is no snake.
+ * The first screen of onboarding (V0.12, revision 2). "Hello, welcome to cseed" in liquid glass over a
+ * looping video (or a calm stand-in), cycling through 15 languages, with nothing else on screen. A press
+ * anywhere (a click, a tap, a swipe or a key; Escape skips) melts the greeting away and the timeline
+ * (`introPlan.ts`) takes over. The screen draws only what `sampleAt(plan, ms)` returns, so playback, a
+ * second press (fast-forward), Escape and a resize all go through the same sampler.
+ *
+ * The glass word uses the logo's lettering mask from the greeting onward, so its measured
+ * box can land on the real lettering with uniform scale and an opacity-only handoff.
  */
-export function WelcomeIntro({ onDone, targetSelector = '[data-onb-logo]', media = NO_MEDIA }: Props) {
+export function WelcomeIntro({ onDone, targetSelector = '[data-onb-logo]', media = NO_MEDIA, leaving = false, late = false, target: findTarget }: Props) {
   const root = useRef<HTMLDivElement>(null);
-  const stage = useRef<HTMLDivElement>(null);
-  const fx = useRef<HTMLDivElement>(null);
-  const board = useRef<HTMLDivElement>(null);
-  const snake = useRef<HTMLDivElement>(null);
+  const greet = useRef<HTMLDivElement>(null);
+  const backdrop = useRef<HTMLDivElement>(null);
+  const paper = useRef<HTMLDivElement>(null);
+  const video = useRef<HTMLVideoElement>(null);
   const logo = useRef<HTMLDivElement>(null);
-  const bg = useRef<HTMLDivElement>(null);
-  const photo = useRef<HTMLElement>(null);
-  const hint = useRef<HTMLParagraphElement>(null);
-  const [state, setState] = useState<State>('greeting');
-  const [photoSrc, setPhotoSrc] = useState(media.photo ?? PHOTO_PLACEHOLDER);
-  const stateRef = useRef<State>(state);
-  const go = (s: State) => {
-    stateRef.current = s;
-    setState(s);
-  };
-  const anims = useRef<Animation[]>([]);
-  const timer = useRef<number>(0);
-  const raf = useRef<number>(0);
-  const fastForward = useRef<(() => void) | null>(null);
-  const activeIndex = useRef(-1);
+  const sapling = useRef<HTMLDivElement>(null);
+  const word = useRef<HTMLDivElement>(null);
+
+  const [slots, setSlots] = useState<Slots>({ a: 0, b: 1, front: 0, n: 0 });
+  const [phase, setPhase] = useState<Phase>('greeting');
+  const [videoOn, setVideoOn] = useState(false);
+  const phaseRef = useRef<Phase>('greeting');
+  const reduced = useRef(reducedMotion());
   const doneRef = useRef(onDone);
   doneRef.current = onDone;
-  const reduced = useRef(reducedMotion());
+  /** The running playback: its plan, its clock origin and the pieces it draws. */
+  const run = useRef<{ plan: Plan; t0: number; retargeted: boolean; raf: number; draw: (s: Sample) => void; place: (t: Target) => void } | null>(null);
+  /** When the press that started it came (R-1: a second press must be clearly separate). */
+  const startedAt = useRef(0);
+  const lastPointer = useRef(0);
+  const cycleTimer = useRef(0);
 
-  /* ── Greeting cycle ── */
+  /* ── Greeting cycle: two slots take turns; the next language is rendered into the hidden one first. ── */
   useEffect(() => {
-    const phrases = () => Array.from(stage.current?.querySelectorAll<HTMLElement>(':scope > [data-wi-phrase]') ?? []);
-    const show = (i: number) => {
-      const list = phrases();
-      const prev = list[activeIndex.current];
-      const next = list[i];
-      if (!next) return;
-      activeIndex.current = i;
-      list.forEach((el) => el.setAttribute('data-active', el === next ? 'true' : 'false'));
-      if (reduced.current) {
-        if (prev) prev.style.opacity = '0';
-        next.style.opacity = '1';
-        return;
-      }
-      if (prev) prev.animate([{ opacity: 1, transform: 'translateY(0) scale(1)' }, { opacity: 0, transform: 'translateY(-10px) scale(.98)' }], { duration: FADE_OUT, easing: 'ease-in', fill: 'forwards' });
-      next.animate([{ opacity: 0, transform: 'translateY(14px) scale(.98)' }, { opacity: 1, transform: 'translateY(0) scale(1)' }], { duration: FADE_IN, easing: EASE, fill: 'forwards' });
+    const step = () => {
+      if (phaseRef.current !== 'greeting') return;
+      setSlots((s) => {
+        const shown = s.front === 0 ? s.a : s.b;
+        const next = (shown + 1) % GREETINGS.length;
+        return s.front === 0 ? { a: s.a, b: next, front: 1, n: s.n + 1 } : { a: next, b: s.b, front: 0, n: s.n + 1 };
+      });
+      cycleTimer.current = window.setTimeout(step, reduced.current ? REDUCED_CYCLE_MS : CYCLE_MS);
     };
-    const tick = () => {
-      show((activeIndex.current + 1) % GREETINGS.length);
-      timer.current = window.setTimeout(tick, CYCLE_MS);
-    };
-    timer.current = window.setTimeout(tick, 150);
-    const hintTimer = window.setTimeout(() => stateRef.current === 'greeting' && hint.current?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 600, fill: 'forwards' }), 1400);
-    return () => {
-      clearTimeout(timer.current);
-      clearTimeout(hintTimer);
-    };
+    cycleTimer.current = window.setTimeout(step, reduced.current ? REDUCED_CYCLE_MS : CYCLE_MS);
+    return () => clearTimeout(cycleTimer.current);
   }, []);
+  useLayoutEffect(() => {
+    if (slots.n === 0 || phaseRef.current !== 'greeting') return;
+    const els = greet.current?.querySelectorAll<HTMLElement>(':scope > .wi-slot');
+    const incoming = els?.[slots.front];
+    const outgoing = els?.[1 - slots.front];
+    if (!incoming || !outgoing) return;
+    if (reduced.current) {
+      incoming.animate([{ opacity: 0 }, { opacity: 1 }], { duration: REDUCED_FADE, easing: 'ease-in-out' });
+      outgoing.animate([{ opacity: 1 }, { opacity: 0 }], { duration: REDUCED_FADE, easing: 'ease-in-out' });
+      return;
+    }
+    incoming.animate([{ opacity: 0, transform: 'translateY(14px) scale(.98)' }, { opacity: 1, transform: 'none' }], { duration: FADE_IN, easing: EASE });
+    outgoing.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(-10px) scale(.98)' }], { duration: FADE_OUT, easing: 'ease-in' });
+  }, [slots.n]);
 
-  /* ── Start: photo + snake, then the hand-off ── */
-  const finishNow = () => {
-    fastForward.current?.();
-    anims.current.forEach((a) => a.playState !== 'finished' && a.finish());
+  /* ── Video: added after hydration only when it should play (not with reduced motion or Save-Data), and
+     shown only once it is actually playing, over the poster or the stand-in, so there is never a black frame. ── */
+  useEffect(() => {
+    const saveData = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData;
+    if (media.video && !reduced.current && !saveData) setVideoOn(true);
+  }, []);
+  useEffect(() => {
+    const v = video.current;
+    if (!videoOn || !v) return;
+    const show = () => v.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 400, easing: 'ease-out', fill: 'forwards' });
+    if (!v.paused && v.readyState >= 3) show();
+    else v.addEventListener('playing', show, { once: true });
+    // Autoplay can be refused (iOS Low Power Mode): the poster or the stand-in simply stays.
+    v.play().catch(() => {});
+    return () => v.removeEventListener('playing', show);
+  }, [videoOn]);
+
+  /** The page logo's box, or null when it isn't on the page (then the intro fades away without landing, R-7). */
+  const measureTarget = (): Target | null => {
+    if (findTarget) return findTarget();
+    const host = document.querySelector<HTMLElement>(targetSelector);
+    // The image (or the rail's mark) the page shows, not its wrapper: the box the timeline lands on.
+    const el = host && (Array.from(host.querySelectorAll<HTMLElement>('.wordmark-logo, .wordmark-mark')).find((e) => e.getBoundingClientRect().width > 0) ?? host);
+    const r = el?.getBoundingClientRect();
+    if (!host || !el || !r || r.width <= 0 || r.height <= 0) return null;
+    return { x: r.left, y: r.top, w: r.width, h: r.height, kind: host.dataset.kind === 'mark' || el.classList.contains('wordmark-mark') ? 'mark' : 'wordmark' };
+  };
+  const NOWHERE: Target = { x: 0, y: 0, w: 1, h: 1, kind: 'wordmark' };
+  const input = (wordBox: Box, target: Target): Input => {
+    const el = root.current!;
+    return { viewport: { w: el.clientWidth, h: el.clientHeight, dpr: window.devicePixelRatio || 1 }, word: wordBox, target, motion: reduced.current ? 'reduced' : 'full' };
   };
 
-  const play = (skip: boolean, from?: { x: number; y: number }) => {
-    const el = root.current;
-    const st = stage.current;
-    const layer = fx.current;
-    if (!el || !st || !layer || stateRef.current !== 'greeting') return;
-    go('playing');
-    clearTimeout(timer.current);
-    const list = anims.current;
-    const run = (target: Element, frames: Keyframe[], opts: KeyframeAnimationOptions) => {
-      const a = target.animate(frames, { fill: 'both', ...opts });
-      list.push(a);
-      return a;
+  const finish = () => {
+    const r = run.current;
+    if (r) cancelAnimationFrame(r.raf);
+    if (phaseRef.current === 'done') return;
+    phaseRef.current = 'done';
+    setPhase('done');
+    doneRef.current();
+  };
+
+  /** Builds the drawing for one press: the word lifts out, then the sentence and word only move and fade. */
+  const setup = (landing: boolean, short: boolean) => {
+    const write = makeWriter();
+    const g = greet.current!;
+    const gr = g.getBoundingClientRect();
+    // A press can come in the middle of a language change (R-3): freeze both phrases where they are
+    // (their current opacity and position become inline styles) and let both melt from there.
+    for (const a of g.getAnimations({ subtree: true })) {
+      if (a.effect instanceof KeyframeEffect && a.effect.target instanceof HTMLElement && a.effect.target.matches('.wi-slot')) {
+        try {
+          a.commitStyles();
+        } catch {
+          /* not rendered: nothing to keep */
+        }
+      }
+      a.cancel();
+    }
+    const phrases = Array.from(g.querySelectorAll<HTMLElement>(':scope > .wi-slot'))
+      .map((el) => {
+        const style = getComputedStyle(el);
+        return { el, base: +style.opacity, transform: style.transform === 'none' ? '' : style.transform };
+      })
+      .filter((x) => x.base > 0.01);
+    // The phrase the word comes from is the more visible one; the other (mid-change) just fades from where it is.
+    const main = phrases.reduce<(typeof phrases)[number] | null>((a, b) => (!a || b.base > a.base ? b : a), null);
+    // The masked span is the letters' box, independent of language or font metrics.
+    const source = main?.el.querySelector<HTMLElement>('.wi-face .wi-cs');
+    const cs = source?.getBoundingClientRect();
+    const box: Box = cs && cs.width > 0 ? { x: cs.left, y: cs.top, w: cs.width, h: cs.height } : { x: gr.left + gr.width / 2 - 1, y: gr.top + gr.height / 2 - 1, w: 2, h: 2 };
+
+    const wd = word.current!;
+    wd.style.left = px(box.x);
+    wd.style.top = px(box.y);
+    wd.style.width = px(box.w);
+    wd.style.height = px(box.h);
+    wd.replaceChildren();
+    const glass = source?.cloneNode(true) as HTMLElement | undefined;
+    const ink = source?.cloneNode(true) as HTMLElement | undefined;
+    if (glass && ink) {
+      glass.classList.add('wi-word-glass');
+      ink.classList.add('wi-word-ink');
+      wd.append(ink, glass);
+    }
+    // Hide only the selected copy. A second phrase caught mid-change retains its
+    // own word while it fades; removing both would cause a jump on that frame.
+    main?.el.setAttribute('data-lifted', '');
+
+    // Reuse the already-painted phrases instead of rasterising five full-band
+    // clones on the press frame. Their word is hidden, so the sentence can soften
+    // and sag around the independently lifted letters without reflow.
+    backdrop.current!.setAttribute('data-still', '');
+
+    // The landing logo: the page logo's own images in its exact box, faded in, never scaled.
+    const place = (t: Target) => {
+      for (const lg of [logo.current!, sapling.current!]) {
+        lg.style.left = px(t.x);
+        lg.style.top = px(t.y);
+        lg.style.width = px(t.w);
+        lg.style.height = px(t.h);
+        lg.dataset.kind = t.kind;
+      }
     };
-    const phrases = Array.from(st.querySelectorAll<HTMLElement>(':scope > [data-wi-phrase]'));
-    const current = phrases.find((p) => p.getAttribute('data-active') === 'true');
-    st.getAnimations({ subtree: true }).forEach((a) => a.cancel());
-    phrases.forEach((p) => (p.style.opacity = p === current ? '1' : '0'));
-    if (hint.current) run(hint.current, [{ opacity: 0 }], { duration: 160 });
-    run(el.querySelector('.wi-skip')!, [{ opacity: 1 }, { opacity: 0 }], { duration: 200 });
+    let videoPaused = false;
 
-    // The page's logo is the destination; measured now (fixed overlay = viewport coordinates).
-    const target = document.querySelector<HTMLElement>(targetSelector);
-    const found = target?.getBoundingClientRect();
-    const kind: 'mark' | 'wordmark' = target?.dataset.kind === 'mark' ? 'mark' : 'wordmark';
-    const box = found && found.width ? { x: found.left, y: found.top, w: found.width, h: found.height, kind } : { x: 20, y: 20, w: 78, h: 18, kind };
-    const lg = logo.current!;
-    lg.style.left = `${box.x}px`;
-    lg.style.top = `${box.y}px`;
-    lg.style.height = `${box.h}px`;
-    if (target?.dataset.kind) lg.dataset.kind = target.dataset.kind;
+    const draw = (s: Sample) => {
+      // Backdrop → the page's paper, by the end of the glide.
+      write(backdrop.current!, 'opacity', num(s.backdropOpacity));
+      if (s.backdropOpacity === 0 && !videoPaused) {
+        videoPaused = true;
+        video.current?.pause();
+        backdrop.current!.setAttribute('data-still', '');
+        write(backdrop.current!, 'visibility', 'hidden');
+      }
+      // The paper gives way to the page as the logo lands (the page around it shows in the same frames).
+      write(paper.current!, 'opacity', num(1 - clamp01(s.logoOpacity)));
 
-    const vw = el.clientWidth;
-    const vh = el.clientHeight;
-    const ph = photo.current!;
-    const revealPhoto = (delay = 0) => {
-      if (reduced.current) {
-        run(ph, [{ opacity: 0 }, { opacity: 1 }], { duration: 200, delay });
+      const p = 1 - s.sentenceOpacity;
+      for (const { el, base, transform } of phrases) {
+        write(el, 'opacity', num(base * s.sentenceOpacity));
+        if (!short && run.current?.plan.input.motion !== 'reduced') {
+          write(el, 'transform', `${transform} translateY(${px(24 * p * p)}) scaleY(${num(1 + .15 * p * p)})`);
+        }
+      }
+
+      write(wd, 'transform', `translate(${px(s.word.tx)}, ${px(s.word.ty)}) scale(${s.word.s})`);
+      write(wd, 'opacity', num(s.word.opacity * ((main?.base ?? 1) + (1 - (main?.base ?? 1)) * p)));
+      // Ink covers the glass instead of fading both paints simultaneously:
+      // their shared lettering mask keeps full coverage over the fading backdrop.
+      if (glass) write(glass, 'opacity', '1');
+      if (ink) write(ink, 'opacity', num(1 - s.backdropOpacity));
+      write(logo.current!, 'opacity', landing ? num(s.logoOpacity) : '0');
+      write(sapling.current!, 'opacity', landing ? num(s.saplingOpacity) : '0');
+    };
+    return { box, draw, place };
+  };
+
+  /** Starts playback from 0 ms: the full timeline, or the short one (Escape, reduced motion, no logo). */
+  const start = (short: boolean) => {
+    phaseRef.current = 'playing';
+    setPhase('playing');
+    clearTimeout(cycleTimer.current);
+    startedAt.current = performance.now();
+    const target = measureTarget();
+    const landing = !!target;
+    const { box, draw, place } = setup(landing, short || !target);
+    const inp = input(box, target ?? NOWHERE);
+    const plan = short || !target ? skipPlan(inp) : buildPlan(inp);
+    place(plan.input.target);
+    const r = { plan, t0: performance.now(), retargeted: !landing, raf: 0, draw, place };
+    run.current = r;
+    const frame = (now: number) => {
+      if (run.current !== r) return;
+      const ms = now - r.t0;
+      // The page logo is measured again when the word starts to glide (D-15).
+      if (!r.retargeted && ms >= r.plan.timeline.glideStart) retarget(r);
+      const s = sampleAt(r.plan, ms);
+      r.draw(s);
+      // The end state (the landing logo fully in) is painted once before the overlay goes, so the
+      // page's own logo takes over from a full-strength copy in the same box.
+      if (s.stage === 'done') r.raf = requestAnimationFrame(finish);
+      else r.raf = requestAnimationFrame(frame);
+    };
+    frame(performance.now());
+  };
+  /** Re-measures the page logo, keeping the last box if it has gone. */
+  const retarget = (r: NonNullable<typeof run.current>) => {
+    r.retargeted = true;
+    const t = measureTarget();
+    if (!t) return;
+    r.plan = retargetPlan(r.plan, t);
+    r.place(t);
+  };
+
+  /** A second press: jump to the start of the swap (the swap still plays). */
+  const fastForward = () => {
+    const r = run.current;
+    if (!r || phaseRef.current !== 'playing') return;
+    if (!r.retargeted) retarget(r);
+    const ff = r.plan.ffTo;
+    if (performance.now() - r.t0 < ff) r.t0 = performance.now() - ff;
+  };
+
+  const activate = () => {
+    if (phaseRef.current === 'greeting') start(reduced.current);
+    else if (performance.now() - startedAt.current >= SECOND_PRESS_MS) fastForward();
+  };
+  const skip = () => {
+    if (phaseRef.current === 'greeting') start(true);
+    else {
+      const r = run.current;
+      if (!r || phaseRef.current !== 'playing') return;
+      if (r.plan.input.motion === 'reduced') { fastForward(); return; }
+      // Escape during travel freezes the current pose and takes the same short
+      // fade. Seeking to ffTo here would visibly teleport the word to the corner.
+      const now = performance.now();
+      const held = sampleAt(r.plan, now - r.t0);
+      const draw = r.draw;
+      r.plan = skipPlan(r.plan.input);
+      r.t0 = now;
+      r.retargeted = true;
+      r.draw = (s) => draw({
+        ...s,
+        sentenceOpacity: held.sentenceOpacity * s.sentenceOpacity,
+        backdropOpacity: held.backdropOpacity * s.backdropOpacity,
+        word: { ...held.word, opacity: held.word.opacity * s.word.opacity },
+        logoOpacity: held.logoOpacity + (1 - held.logoOpacity) * s.logoOpacity,
+        saplingOpacity: held.saplingOpacity + (1 - held.saplingOpacity) * s.saplingOpacity,
+      });
+    }
+  };
+
+  /* ── Input. Listeners go on before the first interactive paint, and a press made before hydration
+     (kept by the inline script in onboarding.astro) is replayed, so no early press is lost. ── */
+  useLayoutEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (phaseRef.current === 'done') return;
+      if (e.key === 'Tab') {
+        // Nothing inside is focusable but the dialog itself, and everything outside is inert.
+        e.preventDefault();
+        root.current?.focus({ preventScroll: true });
         return;
       }
-      const r = ph.getBoundingClientRect();
-      const o = from ?? { x: vw / 2, y: vh / 2 };
-      const dx = o.x - (r.left + r.width / 2);
-      const dy = o.y - (r.top + r.height / 2);
-      run(
-        ph,
-        [
-          { opacity: 0, transform: `translate(${dx}px, ${dy}px) scale(.08)` },
-          { opacity: 1, transform: 'translate(0, 0) scale(1.03)', offset: 0.7 },
-          { opacity: 1, transform: 'translate(0, 0) scale(1)' },
-        ],
-        { duration: 720, delay, easing: EASE },
-      );
-    };
-    /**
-     * Hand-off: everything but the logo fades over the page, whose logo is at the same spot. The
-     * fade starts from whatever opacity each layer has then (one keyframe) and fills forwards only,
-     * so during its delay it cannot override the layers' own reveals (or reveal what was never shown).
-     */
-    const end = (after: number, layers: Element[]) => {
-      layers.forEach((n) => run(n, [{ opacity: 0 }], { duration: 240, delay: after, easing: 'ease-out', fill: 'forwards' }));
-      return run(el, [{ opacity: 1 }, { opacity: 1 }], { duration: after + 240 });
-    };
-
-    let finished: Promise<unknown>;
-    if (skip) {
-      if (current) run(current, [{ opacity: 1 }, { opacity: 0 }], { duration: reduced.current ? 1 : 160 });
-      run(lg, [{ opacity: 0 }, { opacity: 1 }], { duration: reduced.current ? 1 : 200, delay: reduced.current ? 0 : 80 });
-      finished = end(reduced.current ? 60 : 200, [bg.current!, st]).finished; // the photo and grid never showed
-    } else if (reduced.current) {
-      // No snake: the photo fades in, stays a moment, then the logo fades in and the overlay goes.
-      if (current) run(current, [{ opacity: 1 }, { opacity: 0 }], { duration: 200 });
-      revealPhoto();
-      run(lg, [{ opacity: 0 }, { opacity: 1 }], { duration: 200, delay: REDUCED_HOLD });
-      finished = end(REDUCED_HOLD + 200, [bg.current!, ph, st]).finished;
-    } else {
-      revealPhoto();
-      const textBox = (() => {
-        const span = current?.querySelector<HTMLElement>('.wi-text');
-        if (!span) return null;
-        const r = document.createRange();
-        r.selectNodeContents(span);
-        const rects = Array.from(r.getClientRects());
-        if (!rects.length) return span.getBoundingClientRect();
-        return { left: Math.min(...rects.map((q) => q.left)), right: Math.max(...rects.map((q) => q.right)), top: Math.min(...rects.map((q) => q.top)), bottom: Math.max(...rects.map((q) => q.bottom)) };
-      })();
-      const plan = buildPlan({ vw, vh, text: textBox ?? { left: vw * 0.2, right: vw * 0.8, top: vh * 0.45, bottom: vh * 0.55 }, target: box });
-      finished = runSnake(plan, box, current, run, (after) => end(after, [bg.current!, ph, board.current!, st]));
-    }
-
-    finished
-      .then(() => {
-        if (!root.current) return;
-        go('done');
-        doneRef.current();
-      })
-      .catch(() => {});
-  };
-
-  /** Lays out the board, the greeting strips and the seeds, then drives the snake one grid tick at a time. */
-  const runSnake = (plan: Plan, box: { kind: 'mark' | 'wordmark' }, current: HTMLElement | undefined, run: (t: Element, f: Keyframe[], o: KeyframeAnimationOptions) => Animation, end: (after: number) => Animation) => {
-    const layer = fx.current!;
-    const bd = board.current!;
-    const sn = snake.current!;
-    const { C } = plan;
-    const S = Math.round(C * 0.86);
-    const inset = (C - S) / 2;
-    bd.style.setProperty('--wi-c', `${C}px`);
-    bd.style.backgroundPosition = `${plan.ox}px ${plan.oy}px`;
-    root.current!.style.setProperty('--wi-r', `${Math.max(2, Math.round(C * 0.1))}px`);
-    run(bd, [{ opacity: 0 }, { opacity: 1 }], { duration: 400 });
-
-    // 1. The greeting becomes vertical strips; each vanishes as the head reaches it.
-    if (current) {
-      current.style.opacity = '0';
-      const vw = root.current!.clientWidth;
-      for (const s of plan.slices) {
-        const strip = document.createElement('div');
-        strip.className = 'wi-slice';
-        strip.style.left = `${s.x0}px`;
-        strip.style.width = `${s.x1 - s.x0}px`;
-        const clone = current.cloneNode(true) as HTMLElement;
-        clone.removeAttribute('data-wi-phrase');
-        clone.removeAttribute('data-active');
-        clone.setAttribute('aria-hidden', 'true');
-        clone.style.left = `${-s.x0}px`;
-        clone.style.width = `${vw}px`;
-        clone.style.opacity = '1';
-        strip.appendChild(clone);
-        layer.appendChild(strip);
-        run(strip, [{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(.86)' }], { delay: s.eatAt, duration: 150, easing: 'ease-in' });
-      }
-    }
-
-    // 2. Seeds on the letters, popping in while the snake is off-screen; each goes when the head lands on it.
-    //    The hidden lifts between letters hold seeds too (that is how the snake keeps growing), but they are never drawn.
-    const wrapT = plan.at[plan.wrapAt]!;
-    const seeds = plan.apples.filter((idx) => plan.route[idx]!.kind === 'letter');
-    const stagger = Math.min(6, 320 / seeds.length);
-    const seedSize = Math.max(4, Math.round(S * 0.56));
-    seeds.forEach((idx, j) => {
-      const p = plan.px(plan.route[idx]!);
-      const a = document.createElement('div');
-      a.className = 'wi-apple';
-      a.setAttribute('data-wi-apple', '');
-      a.style.width = `${seedSize}px`;
-      a.style.height = `${Math.round(seedSize * 1.15)}px`;
-      const pos = `translate(${(p.x + (C - seedSize) / 2).toFixed(1)}px, ${(p.y + (C - seedSize * 1.15) / 2).toFixed(1)}px)`;
-      layer.appendChild(a);
-      run(a, [{ opacity: 0, transform: `${pos} scale(0)` }, { opacity: 1, transform: `${pos} scale(1.25)`, offset: 0.6 }, { opacity: 1, transform: `${pos} scale(1)` }], { delay: wrapT - 380 + j * stagger, duration: 300, easing: EASE });
-      run(a, [{ opacity: 0, transform: `${pos} scale(1)` }], { delay: plan.at[idx]!, duration: 1, fill: 'forwards' });
-    });
-
-    // 3. The snake: one pooled square per body cell, moved by transform on each tick. A cell on a
-    //    hidden lift is never drawn, so the snake writes only the letters.
-    const word = document.createElement('div');
-    word.className = 'wi-word';
-    sn.appendChild(word);
-    // The snake is drawn in the wordmark's own ink (fixed, both themes) while the light photo card
-    // is behind it. A copy of the written word in the theme's text colour sits on top, filled in
-    // once the word is written, and fades in over the shrink, so in dark mode the word arrives on
-    // the dark shell as light ink, the same as the white wordmark that takes over (opacity only).
-    const themed = document.createElement('div');
-    themed.className = 'wi-word wi-word--themed';
-    themed.setAttribute('data-wi-word-themed', '');
-    sn.appendChild(themed);
-    const max = plan.ticks[plan.ticks.length - 1]!.len;
-    const segs: HTMLElement[] = [];
-    for (let i = 0; i < max; i++) {
-      const d = document.createElement('div');
-      d.className = i === 0 ? 'wi-seg wi-seg--head' : 'wi-seg';
-      d.setAttribute('data-wi-snake', i === 0 ? 'head' : 'body');
-      d.style.width = d.style.height = `${S}px`;
-      if (i === 0) d.innerHTML = '<i class="wi-eye wi-eye--l"></i><i class="wi-eye wi-eye--r"></i>';
-      segs.push(d);
-    }
-    for (let i = max - 1; i >= 0; i--) word.appendChild(segs[i]!);
-    const render = (t: number) => {
-      const body = plan.body(t);
-      segs.forEach((el, s) => {
-        const ri = body[s];
-        if (ri === undefined) {
-          el.style.opacity = '0';
-          return;
-        }
-        const c = plan.route[ri]!;
-        const p = plan.px(c);
-        const on = c.kind !== 'lift' && c.x >= -1 && c.x <= plan.cols && c.y >= -1 && c.y <= plan.rows;
-        el.style.opacity = on ? '1' : '0';
-        let rot = '';
-        if (s === 0) {
-          const b = plan.route[ri - 1] ?? c;
-          const dx = c.x - b.x;
-          const dy = c.y - b.y;
-          rot = ` rotate(${dx === -1 ? 180 : dy === 1 ? 90 : dy === -1 ? -90 : 0}deg)`;
-        }
-        el.style.transform = `translate(${(p.x + inset).toFixed(1)}px, ${(p.y + inset).toFixed(1)}px)${rot}`;
-        el.dataset.kind = c.kind;
-        el.dataset.cell = `${c.x - plan.gx0},${c.y - plan.gy0}`;
-      });
-    };
-
-    // The sapling, waiting to sprout after the d.
-    const sprout = document.createElement('div');
-    sprout.className = 'wi-sprout';
-    sprout.setAttribute('data-wi-sprout', '');
-    sprout.innerHTML = saplingSvg();
-    sprout.style.width = sprout.style.height = `${plan.sprout.size.toFixed(1)}px`;
-    sprout.style.left = `${plan.sprout.x.toFixed(1)}px`;
-    sprout.style.top = `${plan.sprout.y.toFixed(1)}px`;
-    sn.insertBefore(sprout, word);
-
-    const last = plan.ticks.length - 1;
-    let shown = -1;
-    const t0 = performance.now();
-    const corners = roundCorners();
-    const spelled = () => {
-      render(last);
-      shown = last;
-      cancelAnimationFrame(raf.current);
-      if (stateRef.current !== 'playing') return;
-      // The cells close up into solid, round strokes (scale and opacity on the compositor; the
-      // corners are a one-off restyle), the eyes close and the sapling sprouts.
-      const grow = (C / S) * 1.06;
-      segs.forEach((el) => {
-        if (el.dataset.kind !== 'letter') return;
-        // Square where cells meet, round only on the outer corner of a turn.
-        const r = corners.get(el.dataset.cell!);
-        el.style.borderRadius = '0';
-        if (r) {
-          el.dataset.round = r;
-          el.style[({ tl: 'borderTopLeftRadius', tr: 'borderTopRightRadius', br: 'borderBottomRightRadius', bl: 'borderBottomLeftRadius' } as const)[r]] = '50%';
-        }
-        // Scale after the cell's own translate, so each cell grows about its own centre.
-        const at = el.style.transform;
-        run(el, [{ transform: `${at} scale(1)` }, { transform: `${at} scale(${grow.toFixed(3)})` }], { duration: 260, easing: EASE, fill: 'forwards' });
-        const copy = document.createElement('div');
-        copy.className = 'wi-seg';
-        copy.style.cssText = el.style.cssText;
-        copy.style.opacity = '1';
-        copy.style.transform = `${at} scale(${grow.toFixed(3)})`;
-        themed.appendChild(copy);
-      });
-      segs[0]!.querySelectorAll('.wi-eye').forEach((e) => run(e, [{ opacity: 0 }], { duration: 160, fill: 'forwards' }));
-      go('spelled');
-    };
-    fastForward.current = spelled;
-    const frame = (now: number) => {
-      const el = now - t0;
-      let t = shown;
-      while (t < last && plan.at[t + 1]! <= el) t++;
-      if (t !== shown) {
-        shown = t;
-        render(t);
-      }
-      if (t >= last) spelled();
-      else raf.current = requestAnimationFrame(frame);
-    };
-    render(0);
-    shown = 0;
-    raf.current = requestAnimationFrame(frame);
-
-    // 4. The sapling sprouts from its stem, the wordmark holds, then shrinks onto the page logo,
-    //    which takes its place. On the rail the sapling lands on the sapling mark and the word fades.
-    run(sprout, [
-      { opacity: 0, transform: 'scale(0, 0)' },
-      { opacity: 1, transform: 'scale(.35, .7)', offset: 0.35 },
-      { opacity: 1, transform: 'scale(1.08)', offset: 0.75 },
-      { opacity: 1, transform: 'scale(1)' },
-    ], { delay: plan.spelledAt + 120, duration: 620, easing: 'cubic-bezier(.3, .7, .3, 1)' });
-    const { tx, ty, s } = plan.morph;
-    run(bd, [{ opacity: 0 }], { delay: plan.morphAt - 300, duration: 300, fill: 'forwards' });
-    run(sn, [{ transform: 'translate(0, 0) scale(1)' }, { transform: `translate(${tx.toFixed(2)}px, ${ty.toFixed(2)}px) scale(${s.toFixed(5)})` }], { delay: plan.morphAt, duration: plan.morphEnd - plan.morphAt, easing: 'cubic-bezier(.65, 0, .25, 1)' });
-    // (On the rail the word fades out instead, so the themed copy never shows.)
-    if (box.kind !== 'mark') run(themed, [{ opacity: 0 }, { opacity: 1 }], { delay: plan.morphAt, duration: plan.morphEnd - plan.morphAt, easing: 'cubic-bezier(.65, 0, .25, 1)' });
-    if (box.kind === 'mark') run(word, [{ opacity: 1 }, { opacity: 0 }], { delay: plan.morphAt, duration: (plan.morphEnd - plan.morphAt) * 0.6, easing: 'ease-in' });
-    run(sn, [{ opacity: 1 }, { opacity: 0 }], { delay: plan.morphEnd - 100, duration: 140 });
-    run(logo.current!, [{ opacity: 0, transform: 'scale(.85)' }, { opacity: 1, transform: 'scale(1)' }], { delay: plan.morphEnd - 160, duration: 220, easing: EASE });
-    return end(plan.duration + 80).finished;
-  };
-
-  /* ── Input: a click, a tap or any key starts; Tab still moves focus, Escape skips; a second press fast-forwards ── */
-  const activate = (from?: { x: number; y: number }) => {
-    if (stateRef.current === 'greeting') play(false, from);
-    else if (stateRef.current === 'playing' || stateRef.current === 'spelled') finishNow();
-  };
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Tab' || ['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Fn', 'OS'].includes(e.key) || e.isComposing) return;
-      if (e.ctrlKey || e.metaKey || e.altKey) return; // leave browser shortcuts alone
+      // A held key repeats: only its first keydown is a press (R-1).
       if (e.key === 'Escape') {
         e.preventDefault();
-        if (stateRef.current === 'greeting') play(true);
-        else finishNow();
+        if (!e.repeat) skip();
         return;
       }
-      // A focused button handles its own Enter/Space.
-      if ((e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') && (e.target as HTMLElement | null)?.closest('button, a')) return;
+      if (!startKey(e)) return; // F-keys, modifiers, media keys and shortcuts stay the browser's
       e.preventDefault();
-      activate();
+      if (!e.repeat) activate();
     };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.__wiReady = true;
+    const early: EarlyInput[] = window.__wiEarly ?? [];
+    window.__wiEarly = [];
+    if (early.some((x) => x.kind === 'key' && x.key === 'Escape')) skip();
+    else if (early.length) activate();
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.__wiReady = false;
+    };
   }, []);
-  useEffect(() => {
+
+  /* ── A real modal: the rest of the page is inert while it is up; focus returns afterwards. ── */
+  useLayoutEffect(() => {
     const el = root.current;
     const before = document.activeElement as HTMLElement | null;
-    // A real modal: everything outside the overlay is inert while it is up.
     const inerted: Element[] = [];
     for (let node: Element | null = el; node && node !== document.documentElement; node = node.parentElement) {
       for (const sib of Array.from(node.parentElement?.children ?? [])) {
@@ -435,27 +425,50 @@ export function WelcomeIntro({ onDone, targetSelector = '[data-onb-logo]', media
       }
     }
     el?.focus({ preventScroll: true });
-    // Tab moves between the overlay itself and Skip, and never leaves.
-    const trap = (e: KeyboardEvent) => {
-      if (e.key !== 'Tab' || !el) return;
-      const f = [el, ...Array.from(el.querySelectorAll<HTMLElement>('button'))];
-      const i = f.indexOf(document.activeElement as HTMLElement);
-      const next = e.shiftKey ? (i <= 0 ? f.length - 1 : i - 1) : i === f.length - 1 ? 0 : i + 1;
-      e.preventDefault();
-      f[next]?.focus();
+    // Shown only once the account had loaded (someone else saw it in this browser, R-4): fade it in.
+    if (late) el?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 280, easing: 'ease-out' });
+    // With a poster, the glass bends the poster's colours (the video's first frame) instead of the stand-in's.
+    if (media.poster) el?.style.setProperty('--wi-refract', `url("${media.poster}")`);
+    // Start the fonts for every greeting now, while English shows, so no language swaps fonts mid-fade.
+    document.fonts?.load?.('500 1em "cseed Hello"', GREETINGS.map((g) => g.text).join('')).catch(() => {});
+    // The landing logo's images are decoded now, not on the frame they first show.
+    el?.querySelectorAll<HTMLImageElement>('[data-wi-logo] img').forEach((i) => i.decode?.().catch(() => {}));
+    // A rotation or resize mid-run: jump to the end state (done, not ffTo), onto the freshly measured logo (D-15).
+    const onResize = () => {
+      const r = run.current;
+      if (!r || phaseRef.current !== 'playing') return;
+      // The shell's resize listener may run after ours. Measure on the next
+      // animation frame, after all resize handlers have placed the shell logo.
+      r.retargeted = false;
+      r.t0 = Math.min(r.t0, performance.now() - r.plan.done);
     };
-    el?.addEventListener('keydown', trap);
+    window.addEventListener('resize', onResize);
     return () => {
-      el?.removeEventListener('keydown', trap);
+      window.removeEventListener('resize', onResize);
       inerted.forEach((n) => n.removeAttribute('inert'));
       if (before && before !== document.body && before.isConnected) before.focus({ preventScroll: true });
-      clearTimeout(timer.current);
-      cancelAnimationFrame(raf.current);
-      anims.current.forEach((a) => a.cancel());
+      clearTimeout(cycleTimer.current);
+      if (run.current) cancelAnimationFrame(run.current.raf);
+      run.current = null;
     };
   }, []);
 
-  const hasPhoto = photoSrc !== PHOTO_PLACEHOLDER;
+  /* ── The page found there is no intro after all: fade out from the greeting, or finish now. ── */
+  useEffect(() => {
+    if (!leaving) return;
+    if (phaseRef.current === 'playing') {
+      fastForward();
+      return;
+    }
+    if (phaseRef.current !== 'greeting') return;
+    phaseRef.current = 'done';
+    clearTimeout(cycleTimer.current);
+    const a = root.current?.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 280, easing: 'ease-out', fill: 'forwards' });
+    if (a) a.finished.then(() => doneRef.current(), () => {});
+    else doneRef.current();
+  }, [leaving]);
+
+  const front = slots.front;
   return (
     <div
       class="wi"
@@ -464,41 +477,60 @@ export function WelcomeIntro({ onDone, targetSelector = '[data-onb-logo]', media
       role="dialog"
       aria-modal="true"
       aria-label="Welcome to cseed. Press any key, click or tap anywhere to begin."
-      data-state={state}
-      data-photo={hasPhoto ? 'on' : 'placeholder'}
-      onClick={(e) => activate({ x: e.clientX, y: e.clientY })}
+      data-state={phase}
+      data-video={videoOn ? 'on' : 'off'}
+      onPointerUp={(e) => {
+        if (e.button > 0) return;
+        lastPointer.current = performance.now();
+        activate();
+      }}
+      onClick={(e) => {
+        // Assistive tech can click without pointer events; a real press has already been handled,
+        // and the second click of a double-click is never a new press.
+        if (e.detail > 1 || performance.now() - lastPointer.current < SAME_PRESS_MS) return;
+        activate();
+      }}
     >
-      <div class="wi-bg" ref={bg} aria-hidden="true" />
-      <figure class="wi-photo" ref={photo} data-wi-photo={hasPhoto ? 'photo' : 'placeholder'}>
-        <img src={photoSrc} alt={hasPhoto ? 'The cseed team' : ''} decoding="async" onError={() => setPhotoSrc(PHOTO_PLACEHOLDER)} />
-      </figure>
+      <div class="wi-paper" ref={paper} aria-hidden="true" />
+      <div class="wi-backdrop" ref={backdrop} aria-hidden="true" data-wi-backdrop>
+        <div class="wi-standin" data-wi-standin />
+        {media.poster && <img class="wi-poster" src={media.poster} alt="" decoding="async" fetchpriority="high" data-wi-poster />}
+        {videoOn && (
+          <video
+            class="wi-video"
+            ref={video}
+            src={media.video}
+            poster={media.poster}
+            muted
+            autoplay
+            loop
+            playsInline
+            preload="auto"
+            disablePictureInPicture
+            disableRemotePlayback
+            tabIndex={-1}
+            aria-hidden="true"
+            data-wi-video
+            onError={() => setVideoOn(false)}
+          />
+        )}
+        <div class="wi-scrim" />
+      </div>
       <p class="visually-hidden">{ACCESSIBLE_GREETING}</p>
-      <div class="wi-stage" ref={stage} aria-hidden="true">
-        {GREETINGS.map((g) => (
-          <Phrase key={g.lang} g={g} />
-        ))}
+      <div class="wi-greet" ref={greet} aria-hidden="true" data-wi-greeting>
+        <Phrase key={`a${slots.a}`} g={GREETINGS[slots.a]!} front={front === 0} />
+        <Phrase key={`b${slots.b}`} g={GREETINGS[slots.b]!} front={front === 1} />
       </div>
-      <div class="wi-board" ref={board} aria-hidden="true" />
-      <div class="wi-fx" ref={fx} aria-hidden="true" />
-      <div class="wi-snake" ref={snake} aria-hidden="true" />
-      <div class="wi-logo" ref={logo} data-wi-logo aria-hidden="true">
-        <LogoImages />
+      {/* Isolate the additive word/logo swap from the backdrop and page. */}
+      <div class="wi-artwork" aria-hidden="true">
+        <div class="wi-word" ref={word} data-wi-word />
+        <div class="wi-logo" ref={logo} data-wi-logo data-part="letters">
+          <LogoImages />
+        </div>
+        <div class="wi-logo" ref={sapling} data-wi-logo-sapling data-part="sapling">
+          <LogoImages />
+        </div>
       </div>
-      <p class="wi-hint wi-ui" ref={hint} aria-hidden="true">
-        <span class="wi-hint-mouse">Click anywhere or press any key</span>
-        <span class="wi-hint-touch">Tap anywhere to begin</span>
-      </p>
-      <button
-        type="button"
-        class="wi-skip wi-ui"
-        onClick={(e) => {
-          e.stopPropagation();
-          if (stateRef.current === 'greeting') play(true);
-          else finishNow();
-        }}
-      >
-        Skip
-      </button>
     </div>
   );
 }

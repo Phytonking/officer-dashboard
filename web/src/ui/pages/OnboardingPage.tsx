@@ -1,5 +1,5 @@
 import { markGreetingSignedOut } from '../views/home/browserGreeting';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { api, ApiCallError } from '../../lib/api/client';
 import type { CalendarSettings, OnboardingState, ProfileResponse, WidgetPlacement, CurrentUser } from '../../lib/contracts';
 import { clearCachedRole } from '../../lib/session';
@@ -8,6 +8,7 @@ import { ProfileForm, type ProfileFormHandle, type ProfileSection } from '../vie
 import { CalendarPanel } from '../views/CalendarPanel';
 import { WelcomeIntro, type HelloMedia } from '../onboarding/WelcomeIntro';
 import { ShellLogo } from '../onboarding/LogoMark';
+import { OFF_CLASS, rememberIntro, seenIntro } from '../onboarding/introEarly';
 
 /**
  * First sign-in (and, once, for accounts from before V0.9): the welcome intro, then the intake
@@ -92,7 +93,7 @@ function Unavailable() {
   );
 }
 
-function OnboardingFlow({ intro, onIntroStart }: { intro: boolean; onIntroStart: (on: boolean) => void }) {
+function OnboardingFlow({ intro, hideLogo, onIntroStart }: { intro: boolean; hideLogo: boolean; onIntroStart: (on: boolean, userId?: string) => void }) {
   const [unavailable, setUnavailable] = useState(false);
   const [data, setData] = useState<Loaded | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
@@ -151,6 +152,8 @@ function OnboardingFlow({ intro, onIntroStart }: { intro: boolean; onIntroStart:
     Promise.all([api('me'), api('profileGet'), api('prefsGet')]).then(
       ([me, p, prefs]) => {
         if (!me.onboarding) {
+          // Already set up: next time this browser opens /onboarding, the hello screen doesn't flash first.
+          rememberIntro(me.user.id);
           location.replace('/');
           return;
         }
@@ -168,15 +171,19 @@ function OnboardingFlow({ intro, onIntroStart }: { intro: boolean; onIntroStart:
         setStep(s);
         history.replaceState({ step: s }, '', back && s === 4 ? location.pathname + location.search : location.pathname);
         // The intro is the first thing a person sees, not something to sit through again on resume.
-        onIntroStart(s === 1 && !back);
+        onIntroStart(s === 1 && !back, me.user.id);
       },
-      (e) => setLoadError(e),
+      (e) => {
+        setLoadError(e);
+        onIntroStart(false);
+      },
     );
   };
   useEffect(() => {
     // Read the URL after hydration: the static HTML is the loading state.
     if (new URLSearchParams(location.search).has('unavailable')) {
       setUnavailable(true);
+      onIntroStart(false);
       return;
     }
     load();
@@ -235,7 +242,13 @@ function OnboardingFlow({ intro, onIntroStart }: { intro: boolean; onIntroStart:
   if (loadError) return <LoadError error={loadError} onRetry={load} />;
   if (!data || !profile || !picked)
     return (
-      <div class="onb" aria-busy="true">
+      <div class={`onb${hideLogo ? ' onb--intro' : ''}`} aria-busy="true">
+        {/* The logo is here from the start, so the intro (server-rendered over this) can measure where it lands. */}
+        <header class="onb-top">
+          <span class="onb-logo-slot">
+            <ShellLogo />
+          </span>
+        </header>
         <div class="onb-main onb-main--single">
           <section class="onb-step">
             <p class="brand-eyebrow">one moment</p>
@@ -402,7 +415,7 @@ function OnboardingFlow({ intro, onIntroStart }: { intro: boolean; onIntroStart:
   const section = SECTIONS[step];
   const eyebrow = `${String(step).padStart(2, '0')} · ${NAMES[step - 1]!.toLowerCase()}`;
   return (
-    <div class={`onb${intro ? ' onb--intro' : ''}`} data-step={step} data-intro={intro ? 'on' : 'off'}>
+    <div class={`onb${hideLogo ? ' onb--intro' : ''}`} data-step={step} data-intro={intro ? 'on' : 'off'}>
       <a class="skip-link" href="#step-title">
         Skip to setup
       </a>
@@ -410,85 +423,115 @@ function OnboardingFlow({ intro, onIntroStart }: { intro: boolean; onIntroStart:
         <span class="onb-logo-slot">
           <ShellLogo />
         </span>
-        {!intro && (
-          <>
-            <ol class="onb-progress" style={`--steps:${TOTAL}`} aria-label={`Setup progress, step ${step} of ${TOTAL}`}>
-              {NAMES.map((n, i) => (
-                <li key={n} class={`onb-seg${i + 1 < step ? ' is-done' : ''}`} aria-current={i + 1 === step ? 'step' : undefined}>
-                  <span class="visually-hidden">
-                    {n}
-                    {i + 1 < step ? ', completed' : ''}
-                  </span>
-                </li>
-              ))}
-            </ol>
-            <span class="onb-count" aria-hidden="true">
-              0{step} / 0{TOTAL}
-            </span>
-          </>
-        )}
+        <ol class="onb-progress" style={`--steps:${TOTAL}`} aria-label={`Setup progress, step ${step} of ${TOTAL}`}>
+          {NAMES.map((n, i) => (
+            <li key={n} class={`onb-seg${i + 1 < step ? ' is-done' : ''}`} aria-current={i + 1 === step ? 'step' : undefined}>
+              <span class="visually-hidden">
+                {n}
+                {i + 1 < step ? ', completed' : ''}
+              </span>
+            </li>
+          ))}
+        </ol>
+        <span class="onb-count" aria-hidden="true">
+          0{step} / 0{TOTAL}
+        </span>
       </header>
-      {!intro && (
-        <div class="onb-main onb-main--single">
-          <section class={`onb-step is-entering${dir === -1 ? ' is-back' : ''}`} key={section ? 'profile' : step} aria-busy={busy || undefined}>
-            <p class="brand-eyebrow" key={`e${step}`}>
-              {eyebrow}
-            </p>
-            <h1 class="display display--xl onb-title" id="step-title" tabIndex={-1} ref={titleRef} key={`t${step}`}>
-              {titles[step - 1]}
-            </h1>
-            <p class="brand-lede onb-lede" key={`l${step}`}>
-              {ledes[step - 1]}
-            </p>
-            {section ? (
-              <div ref={profileWrap} data-onb-profile>
-                <ProfileForm data={profile} brand showSave={false} handle={profileRef} onSaved={setProfile} section={section} />
-                {step === 3 && (
-                  <p class="field-hint" data-start-term>
-                    Start term: {ob.startTerm}. It’s set automatically when you join; a director can change it later.
-                  </p>
-                )}
-              </div>
-            ) : (
-              body
-            )}
-            {stepError && (
-              <div class="notice notice--negative" role="alert" data-step-error>
-                {stepError.text}{' '}
-                {stepError.action && (
-                  <button class="btn btn--small" type="button" onClick={stepError.action.run} disabled={busy}>
-                    {stepError.action.label}
-                  </button>
-                )}
-              </div>
-            )}
-          </section>
-        </div>
-      )}
-      {!intro && (
-        <footer class="onb-foot">
-          <button class="btn btn--text" type="button" onClick={back} disabled={step === 1 || busy} data-onb-back>
-            ← Back
-          </button>
-          <button class="btn btn--text onb-skip" type="button" onClick={() => void finishLater()} disabled={busy} data-finish-later>
-            Finish later
-          </button>
-          <button class="btn btn--primary" type="button" onClick={next} disabled={busy} data-onb-next>
-            {busy ? 'Saving…' : `${nextLabel} →`}
-          </button>
-        </footer>
-      )}
+      <div class="onb-main onb-main--single">
+        <section class={`onb-step is-entering${dir === -1 ? ' is-back' : ''}`} key={section ? 'profile' : step} aria-busy={busy || undefined}>
+          <p class="brand-eyebrow" key={`e${step}`}>
+            {eyebrow}
+          </p>
+          <h1 class="display display--xl onb-title" id="step-title" tabIndex={-1} ref={titleRef} key={`t${step}`}>
+            {titles[step - 1]}
+          </h1>
+          <p class="brand-lede onb-lede" key={`l${step}`}>
+            {ledes[step - 1]}
+          </p>
+          {section ? (
+            <div ref={profileWrap} data-onb-profile>
+              <ProfileForm data={profile} brand showSave={false} handle={profileRef} onSaved={setProfile} section={section} />
+              {step === 3 && (
+                <p class="field-hint" data-start-term>
+                  Start term: {ob.startTerm}. It’s set automatically when you join; a director can change it later.
+                </p>
+              )}
+            </div>
+          ) : (
+            body
+          )}
+          {stepError && (
+            <div class="notice notice--negative" role="alert" data-step-error>
+              {stepError.text}{' '}
+              {stepError.action && (
+                <button class="btn btn--small" type="button" onClick={stepError.action.run} disabled={busy}>
+                  {stepError.action.label}
+                </button>
+              )}
+            </div>
+          )}
+        </section>
+      </div>
+      <footer class="onb-foot">
+        <button class="btn btn--text" type="button" onClick={back} disabled={step === 1 || busy} data-onb-back>
+          ← Back
+        </button>
+        <button class="btn btn--text onb-skip" type="button" onClick={() => void finishLater()} disabled={busy} data-finish-later>
+          Finish later
+        </button>
+        <button class="btn btn--primary" type="button" onClick={next} disabled={busy} data-onb-next>
+          {busy ? 'Saving…' : `${nextLabel} →`}
+        </button>
+      </footer>
     </div>
   );
 }
 
-/** The welcome intro is the first step of the flow; it hands over to the intake without a cut. */
+/**
+ * The welcome intro is the first step of the flow; it hands over to the intake without a cut. It is
+ * server-rendered (`pending`), so it shows from the very first paint instead of after the loading
+ * state (B-8). Once the account is loaded the flow confirms it (`on`) or, for a resumed setup, lets
+ * it fade away (`leaving`).
+ */
+type IntroState = 'pending' | 'on' | 'late' | 'leaving' | 'held' | 'off';
 export default function OnboardingPage({ media }: { media?: HelloMedia }) {
-  const [intro, setIntro] = useState(false);
+  const [intro, setIntro] = useState<IntroState>('pending');
+  const user = useRef<string | undefined>(undefined);
+  // The inline script hid the overlay before the first paint (a Google return, the unavailable page,
+  // or this browser has seen the intro before, R-4): hold it until the account says whether it is wanted.
+  useLayoutEffect(() => {
+    if (document.documentElement.classList.contains(OFF_CLASS)) setIntro('held');
+  }, []);
+  const finished = useRef(false);
+  const decide = (on: boolean, userId?: string) => {
+    user.current = userId;
+    // It already played (a press before the account had loaded): remember it for this account now.
+    if (finished.current && on && userId) rememberIntro(userId);
+    const wanted = on && !(userId && seenIntro().includes(userId));
+    // A resumed setup (or one that started on another device) counts as having seen it.
+    if (!on && userId) rememberIntro(userId);
+    setIntro((cur) => {
+      if (cur === 'off') return 'off';
+      if (cur === 'held') {
+        if (!wanted) return 'off';
+        // Someone else saw it in this browser; this invitee still gets it, faded in over the loading state.
+        document.documentElement.classList.remove(OFF_CLASS);
+        return 'late';
+      }
+      return wanted ? 'on' : 'leaving';
+    });
+  };
+  const done = () => {
+    finished.current = intro !== 'leaving';
+    if (user.current && intro !== 'leaving') rememberIntro(user.current);
+    setIntro('off');
+  };
+  const shown = intro === 'pending' || intro === 'on' || intro === 'late' || intro === 'leaving';
   return (
     <>
-      <OnboardingFlow intro={intro} onIntroStart={setIntro} />
-      {intro && <WelcomeIntro onDone={() => setIntro(false)} media={media} />}
+      {/* The intro owns the logo until it unmounts, including a late account decision during playback. */}
+      <OnboardingFlow intro={shown} hideLogo={shown} onIntroStart={decide} />
+      {shown && <WelcomeIntro onDone={done} leaving={intro === 'leaving'} late={intro === 'late'} media={media} />}
     </>
   );
 }
