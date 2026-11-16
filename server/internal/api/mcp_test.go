@@ -339,7 +339,7 @@ func TestMCPToolsActAsTheOfficer(t *testing.T) {
 	if text, isErr = toolCall(e, ot, "get_contact", map[string]any{}); !isErr || !strings.Contains(text, "id") {
 		t.Fatalf("missing path param: %s", text)
 	}
-	if text, isErr = toolCall(e, ot, "get_contact", map[string]any{"id": "../../admin/users"}); !isErr || !strings.Contains(text, "404") {
+	if text, isErr = toolCall(e, ot, "get_contact", map[string]any{"id": "../../admin/users"}); !isErr || !strings.Contains(text, "Invalid id") {
 		t.Fatalf("path escape: %s", text)
 	}
 	if r := mcpRPC(e, ot, "tools/call", map[string]any{"name": "no_such_tool"}); r.Error == nil {
@@ -638,7 +638,7 @@ func TestMCPReviewFixes(t *testing.T) {
 	}
 
 	// Redirects are errors, and dot ids never reach the router.
-	for _, id := range []string{".", ".."} {
+	for _, id := range []string{".", "..", "../admin/users", `a\b`} {
 		if text, isErr := toolCall(e, at, "get_event", map[string]any{"id": id}); !isErr || !strings.Contains(text, "Invalid id") {
 			t.Fatalf("id %q: %v %s", id, isErr, text)
 		}

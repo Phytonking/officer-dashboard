@@ -343,7 +343,9 @@ func (c *Ctx) mcpCall(p principal, t *mcpTool, args map[string]json.RawMessage) 
 		if !ok || len(vs) != 1 || vs[0] == "" {
 			return toolText("Missing required argument: "+seg[1:], true)
 		}
-		if vs[0] == "." || vs[0] == ".." {
+		// Ids never contain slashes or dot segments; refuse them here so the router and the
+		// role check (which runs on the cleaned path) never see a traversal attempt.
+		if vs[0] == "." || vs[0] == ".." || strings.ContainsAny(vs[0], "/\\") {
 			return toolText("Invalid "+seg[1:]+": "+vs[0], true)
 		}
 		path = strings.Replace(path, seg, url.PathEscape(vs[0]), 1)

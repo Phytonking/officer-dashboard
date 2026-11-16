@@ -104,3 +104,10 @@ claude mcp add --transport http cseed-local http://localhost:8090/mcp
 ```
 
 The consent flow uses the normal login page, so the dev sign-in panel works there too.
+
+## Tests and evidence
+
+- `server/internal/api/mcp_test.go` contains the Go tests: OAuth, transport, permissions, revocation, purge and the security-review fixes.
+- `scripts/contract-check.mjs` runs the OAuth → MCP → Connected agents → audit flow.
+- `web/tests/mcp-agents.spec.ts` runs everything end to end against a live server: the browser connect flow, every tool for every role, protocol edge cases and the real clients. It also runs each Go test.
+- With `MCP_SHOTS=1`, every test saves a screenshot to [docs/evidence/mcp-agents](evidence/mcp-agents/README.md).
