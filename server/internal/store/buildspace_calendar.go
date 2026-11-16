@@ -16,7 +16,8 @@ func loadBuildspaceMentorCheckIns(ctx context.Context, q *Queries, window Calend
 func loadBuildspaceCalendarActivity(ctx context.Context, q *Queries, window CalendarRange, kind, label string) ([]CalendarItem, error) {
 	rows, err := q.q.QueryContext(ctx, `SELECT a.id,a.date,p.id,p.name,coalesce(b.name,'') FROM buildspace_launchpad_activity a
  JOIN buildspace_launchpad_projects p ON p.id=a.project_id LEFT JOIN buildspace_launchpad_people b ON b.id=a.person_id
- WHERE a.kind=? AND a.date>=? AND a.date<? ORDER BY a.date,a.id`, kind, window.FirstDate, window.EndDate)
+ JOIN buildspace_launchpad_cohorts c ON c.id=p.cohort_id
+ WHERE a.kind=? AND a.date>=? AND a.date<? AND p.archived_at IS NULL AND c.status='active' AND (b.id IS NULL OR b.archived_at IS NULL) ORDER BY a.date,a.id`, kind, window.FirstDate, window.EndDate)
 	if err != nil {
 		return nil, err
 	}
@@ -42,7 +43,8 @@ func loadBuildspaceCalendarActivity(ctx context.Context, q *Queries, window Cale
 
 // Weekly due items follow the configurable due-day rules (buildspace_schedule.go): one
 // item per builder for each week whose due date falls in the window. A dated weekly entry
-// in that week suppresses it; builders not yet joined and shipped projects are excluded.
+// in that week suppresses it; builders not yet joined, shipped or archived projects, archived
+// builders and archived cohorts are excluded.
 // Titles carry the due time when one is set. This is independent of the People
 // directory's in-progress “awaiting” signal.
 func loadBuildspaceWeeklyDue(ctx context.Context, q *Queries, window CalendarRange) ([]CalendarItem, error) {
@@ -57,7 +59,8 @@ func loadBuildspaceWeeklyDue(ctx context.Context, q *Queries, window CalendarRan
 	}
 	type builder struct{ id, name, project, joined string }
 	rows, err := q.q.QueryContext(ctx, `SELECT b.id,b.name,p.name,b.joined_on FROM buildspace_launchpad_people b
- JOIN buildspace_launchpad_projects p ON p.id=b.project_id WHERE p.stage<>'Shipped' ORDER BY b.id`)
+ JOIN buildspace_launchpad_projects p ON p.id=b.project_id JOIN buildspace_launchpad_cohorts c ON c.id=p.cohort_id
+ WHERE p.stage<>'Shipped' AND p.archived_at IS NULL AND b.archived_at IS NULL AND c.status='active' ORDER BY b.id`)
 	if err != nil {
 		return nil, err
 	}

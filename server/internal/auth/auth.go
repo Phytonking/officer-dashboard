@@ -32,6 +32,9 @@ func under(path, prefix string) bool { return path == prefix || strings.HasPrefi
 var (
 	publicPrefixes       = []string{"/login", "/auth", "/api/health"}
 	serviceTokenPrefixes = []string{"/api/ingest", "/api/agent"}
+	// The builder/mentor portal authenticates its own cookie in the handlers; it never
+	// accepts or needs an officer session (docs/launchpad-cohorts.md).
+	portalPrefixes = []string{"/api/portal"}
 	// Legacy /admin pages only redirect to Officers; the management API remains restricted.
 	directorPrefixes = []string{"/api/admin"}
 )
@@ -40,7 +43,7 @@ var (
 // session layer should not enforce one (public pages, service-token APIs). Finer rules,
 // such as "only directors approve", are enforced in the handler.
 func RequiredRoleForPath(path string) string {
-	for _, p := range append(append([]string{}, publicPrefixes...), serviceTokenPrefixes...) {
+	for _, p := range append(append(append([]string{}, publicPrefixes...), serviceTokenPrefixes...), portalPrefixes...) {
 		if under(path, p) {
 			return ""
 		}
@@ -87,7 +90,7 @@ func DecideLogin(user *KnownUser) Decision {
 }
 
 // RedirectSections are the top-level page sections a post-login redirect may land in (besides "/").
-var RedirectSections = []string{"buildspace", "buildspace-launchpad", "events", "requests", "finance", "admin", "settings", "officers", "members", "speakers", "contacts", "design", "onboarding"}
+var RedirectSections = []string{"buildspace", "buildspace-launchpad", "launchpad", "events", "requests", "finance", "admin", "settings", "officers", "members", "speakers", "contacts", "design", "onboarding"}
 
 // SafeNext returns the post-login redirect target, or "/" unless it is one of the app's own
 // pages. Layers, each enough on its own for the cases it covers:

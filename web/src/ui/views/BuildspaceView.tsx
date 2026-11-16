@@ -22,6 +22,11 @@ import { BuildspaceDetail } from "./buildspace/Detail";
 import { ProjectForm, PersonForm } from "./buildspace/Forms";
 import { CardGroup, MentorCard, PersonCard, ProjectCard, TRACK_HUE, STAGE_HUE, checkIn } from "./buildspace/Cards";
 import { closeAll, leaveEntry, pushEntry } from "./buildspace/history";
+import { CohortBar } from "./buildspace/Cohorts";
+import { InvitesPanel, type InviteLinks } from "./buildspace/Invites";
+import { AutoAssignDialog, MentorRoster } from "./buildspace/Mentors";
+import { lifecycleActions } from "./buildspace/lifecycle";
+import { ACCOUNT_HUE, accountLabel, isDirector } from "./buildspace/launchpad";
 import { PeopleChip } from "../components/PeopleTable";
 import {
   missed,
@@ -32,13 +37,38 @@ import {
 } from "./buildspace/model";
 
 export default function BuildspaceView({ me }: { me: CurrentUser }) {
-  const state = useApi("buildspaceList");
+  const params = useSearch();
+  // The register is one cohort at a time (default: the newest active one); archived projects and
+  // builders load only when asked for (docs/launchpad-cohorts.md).
+  const query = {
+    cohort: params.get("cohort") || undefined,
+    archived: params.get("archived") === "1" ? ("1" as const) : undefined,
+  };
+  const state = useApi("buildspaceList", { query });
   const [notice, setNotice] = useState("");
+  const [links, setLinks] = useState<InviteLinks>({});
+  const canDirector = isDirector(me);
+  const data = state.status === "ready" ? state.data : null;
+  const cohort = data?.cohorts.find((c) => c.id === data.cohortId) ?? null;
+  const readOnly = cohort?.status === "archived";
+  const canAdd = !!data && !!data.cohortId && !readOnly;
   // The intro (the page's LCP text) and its actions need no register data, so they
   // paint as soon as sign-in resolves instead of waiting for /api/buildspace.
   return (
     <div class="buildspace">
       <div class="bs-intro">
+        {data && (
+          <CohortBar
+            cohorts={data.cohorts}
+            cohortId={data.cohortId}
+            canManage={canDirector}
+            changed={(message, select) => {
+              setNotice(message);
+              if (select !== undefined) setParams({ cohort: select, person: null, project: null });
+              else state.reload();
+            }}
+          />
+        )}
         <div class="action-row">
           <ScheduleMenu
             schedule={state.status === "ready" ? state.data.schedule : null}
@@ -48,11 +78,12 @@ export default function BuildspaceView({ me }: { me: CurrentUser }) {
               setNotice("Check-in schedule saved.");
             }}
           />
-          <button class="btn" onClick={() => pushEntry({ new: "person" })}>
+          <button class="btn" disabled={!canAdd} onClick={() => pushEntry({ new: "person" })}>
             Add builder
           </button>
           <button
             class="btn btn--primary"
+            disabled={!canAdd}
             onClick={() => pushEntry({ new: "project" })}
           >
             New project
@@ -61,12 +92,27 @@ export default function BuildspaceView({ me }: { me: CurrentUser }) {
       </div>
       <Async state={state}>
         {(b) => (
-          <BuildspaceContent
-            b={b}
-            reload={state.reload}
-            notice={notice}
-            setNotice={setNotice}
-          />
+          b.cohortId === null ? (
+            <Empty
+              title="No cohort yet"
+              action={canDirector ? undefined : undefined}
+            >
+              {canDirector
+                ? "Create the first cohort with New cohort above, then invite builders to it."
+                : "A director creates cohorts. Ask one to set up the first cohort."}
+            </Empty>
+          ) : (
+            <BuildspaceContent
+              b={b}
+              reload={state.reload}
+              notice={notice}
+              setNotice={setNotice}
+              canDirector={canDirector}
+              readOnly={b.cohorts.find((c) => c.id === b.cohortId)?.status === "archived"}
+              links={links}
+              addLinks={(l) => setLinks((old) => ({ ...old, ...l }))}
+            />
+          )
         )}
       </Async>
     </div>
@@ -77,20 +123,45 @@ function BuildspaceContent({
   reload,
   notice,
   setNotice,
+  canDirector,
+  readOnly,
+  links,
+  addLinks,
 }: {
   b: BuildspaceData;
   reload: () => void;
   notice: string;
   setNotice: (s: string) => void;
+  canDirector: boolean;
+  readOnly: boolean;
+  links: InviteLinks;
+  addLinks: (l: InviteLinks) => void;
 }) {
   const qs = useSearch();
   const personDrawer = usePersonParam();
+  const [autoAssign, setAutoAssign] = useState(false);
+  const [lifecycleError, setLifecycleError] = useState("");
+  const showArchived = qs.get("archived") === "1";
+  const cohort = b.cohorts.find((c) => c.id === b.cohortId);
+  const lifecycleOpts = {
+    canDirector,
+    readOnly,
+    done: (message: string, closed?: boolean) => {
+      setLifecycleError("");
+      reload();
+      setNotice(message);
+      if (closed) closeAll();
+    },
+    fail: (message: string) => setLifecycleError(message),
+  };
   const tab =
     qs.get("tab") === "projects"
       ? "projects"
       : qs.get("tab") === "mentors"
         ? "mentors"
-        : "people";
+        : qs.get("tab") === "invites"
+          ? "invites"
+          : "people";
   const view = qs.get("view") || "table",
     group = qs.get("group") || "track";
   // Whole-view swaps (tab, layout, grouping) crossfade; changes within a view use FLIP.
@@ -278,9 +349,11 @@ function BuildspaceContent({
       : group === "project"
         ? projects.map((p) => ({ id: p.id, label: p.name }))
         : BUILDSPACE_TRACKS.map((t) => ({ id: t, label: t }));
-  const awaiting = b.people.filter((p) => missed(p, b)).length;
+  const live = b.people.filter((p) => p.archivedAt === null);
+  const liveProjects = b.projects.filter((p) => p.archivedAt === null);
+  const awaiting = live.filter((p) => missed(p, b)).length;
   // Tile figures count builder rows, the same rows the tile's filter shows on the People tab.
-  const openRequestBuilders = b.people.filter((x) =>
+  const openRequestBuilders = live.filter((x) =>
     b.activity.some(
       (a) =>
         a.projectId === x.projectId &&
@@ -288,7 +361,7 @@ function BuildspaceContent({
         openActivity(a),
     ),
   ).length;
-  const unmentored = b.people.filter(
+  const unmentored = live.filter(
     (x) => !project(x.projectId).mentorIds.length,
   ).length;
   const flagHref = (f: string) => {
@@ -303,26 +376,32 @@ function BuildspaceContent({
       <StatRow
         label="Buildspace + Launchpad summary"
         tiles={[
-          { label: "Builders", icon: "users", hue: "violet", value: b.people.length, sub: plural(b.projects.length, "project") },
+          { label: "Builders", icon: "users", hue: "violet", value: live.length, sub: plural(liveProjects.length, "project") },
           { label: "Awaiting this week", icon: "clock", hue: "amber", value: awaiting, sub: "no check-in yet", alert: awaiting > 0, href: flagHref("missed"), pressed: flag === "missed" },
           { label: "Open requests", icon: "inbox", hue: "teal", value: openRequestBuilders, sub: "builders with open requests", href: flagHref("requests"), pressed: flag === "requests" },
           { label: "Unmentored", icon: "flag", hue: "coral", value: unmentored, sub: "builders without a mentor", alert: unmentored > 0, href: flagHref("unmentored"), pressed: flag === "unmentored" },
         ]}
       />
+      {readOnly && (
+        <Notice tone="attention">
+          {cohort?.name ?? "This cohort"} is archived, so it is read-only. Builders can still sign in and read their portal.
+        </Notice>
+      )}
       {notice && <Notice tone="positive">{notice}</Notice>}
+      {lifecycleError && <Notice tone="negative">{lifecycleError}</Notice>}
       <div class="bs-toolbar">
         <Tabs
           label="Buildspace + Launchpad directory"
           idPrefix="bs"
           active={tab}
           onChange={(t) => setParams({ tab: t })}
-          tabs={(["people", "projects", "mentors"] as const).map((t) => ({
+          tabs={(["people", "projects", "mentors", "invites"] as const).map((t) => ({
             key: t,
             label: t[0]!.toUpperCase() + t.slice(1),
-            count: b[t].length,
+            count: t === "invites" ? b.accounts.length : t === "people" ? live.length : t === "projects" ? liveProjects.length : b[t].length,
           }))}
         />
-        <div class="segmented" aria-label="Layout">
+        {tab !== "invites" && <div class="segmented" aria-label="Layout">
           {["table", "cards", "board"].map((v) => (
             <button
               class="segment"
@@ -332,8 +411,13 @@ function BuildspaceContent({
               {v[0]!.toUpperCase() + v.slice(1)}
             </button>
           ))}
-        </div>
+        </div>}
       </div>
+      {tab === "invites" ? (
+        <div id="bs-panel" role="tabpanel" aria-labelledby="bs-tab-invites" class="tab-panel">
+          <InvitesPanel b={b} canDirector={canDirector} readOnly={readOnly} links={links} addLinks={addLinks} reload={reload} setNotice={setNotice} />
+        </div>
+      ) : (<>
       <div class="bs-filters">
         <label class="bs-search">
           <span class="visually-hidden">Search Buildspace + Launchpad</span>
@@ -401,6 +485,15 @@ function BuildspaceContent({
             <option value="unmentored">No mentor assigned</option>
           </select>
         </label>
+        <label class="lp-archived-toggle">
+          <input
+            type="checkbox"
+            data-show-archived
+            checked={showArchived}
+            onChange={(e) => setParams({ archived: e.currentTarget.checked ? "1" : null })}
+          />
+          <span>Show archived</span>
+        </label>
       </div>
       <div class="bs-result">
         <span role="status">
@@ -425,6 +518,11 @@ function BuildspaceContent({
           <button class="linkish" onClick={reset}>
             Clear filters
           </button>
+          {(tab === "projects" || tab === "mentors") && !readOnly && (
+            <button type="button" class="btn" data-auto-assign-open onClick={() => setAutoAssign(true)}>
+              Auto-assign mentors
+            </button>
+          )}
         </div>
       </div>
       <div
@@ -515,6 +613,8 @@ function BuildspaceContent({
                   </CardGroup>
                 )}
             </div>
+          ) : tab === "mentors" ? (
+            <MentorRoster b={b} mentors={mentors} canDirector={canDirector} readOnly={readOnly} reload={reload} setNotice={setNotice} />
           ) : (
             <div
               class="table-wrap bs-wrap"
@@ -547,7 +647,7 @@ function BuildspaceContent({
                     ? people.map((p) => {
                         const pr = project(p.projectId);
                         return (
-                          <tr key={p.id} data-flip={p.id}>
+                          <tr key={p.id} data-flip={p.id} class={p.archivedAt !== null ? "lp-muted-row" : undefined} data-archived={p.archivedAt !== null ? "" : undefined}>
                             <td data-label="Builder / project">
                               <button
                                 class="bs-title"
@@ -555,7 +655,19 @@ function BuildspaceContent({
                               >
                                 {p.name}
                               </button>
-                              <span class="bs-sub">{pr.name}</span>
+                              <span class="bs-sub">
+                                {pr.name}
+                                {p.designation && ` · ${p.designation}`}
+                              </span>
+                              {p.archivedAt !== null ? (
+                                <Badge tone="neutral">Archived</Badge>
+                              ) : p.accountStatus ? (
+                                <span class="lp-account-chip" data-account-status={p.accountStatus}>
+                                  <PeopleChip hue={ACCOUNT_HUE[p.accountStatus]}>
+                                    {p.accountStatus === "active" ? "Portal active" : accountLabel({ status: p.accountStatus, inviteExpired: false })}
+                                  </PeopleChip>
+                                </span>
+                              ) : null}
                             </td>
                             <td data-label="Track">
                               <span class="bs-track" data-track={pr.track}>
@@ -605,10 +717,11 @@ function BuildspaceContent({
                       })
                     : tab === "projects"
                       ? projects.map((p) => (
-                          <tr key={p.id} data-flip={p.id}>
+                          <tr key={p.id} data-flip={p.id} class={p.archivedAt !== null ? "lp-muted-row" : undefined} data-archived={p.archivedAt !== null ? "" : undefined}>
                             <td data-label="Project">
                               {projectLink(p)}
                               <span class="bs-sub">{requestCount(p.id)}</span>
+                              {p.archivedAt !== null && <Badge tone="neutral">Archived</Badge>}
                             </td>
                             <td data-label="Track">
                               <span class="bs-track" data-track={p.track}>
@@ -662,6 +775,16 @@ function BuildspaceContent({
         </div>
         <div ref={outRef} class="bs-view-out" />
       </div>
+      </>)}
+      <AutoAssignDialog
+        b={b}
+        open={autoAssign}
+        onClose={() => setAutoAssign(false)}
+        applied={(message) => {
+          reload();
+          setNotice(message);
+        }}
+      />
       <PersonDrawer
         open={!!qs.get("person") && !form}
         onClose={() => {
@@ -675,10 +798,17 @@ function BuildspaceContent({
         eyebrow={detailPerson ? "Buildspace + Launchpad builder" : undefined}
         subtitle={detailPerson ? <button class="bs-title" onClick={() => pushEntry({ person: null, project: detailPerson.projectId })}>{project(detailPerson.projectId).name}</button> : undefined}
         actions={detailPerson ? [
-          // The weekly follow-up's main action; "Add entry" is otherwise the last, often scrolled-off tab.
-          { label: "Log check-in", icon: "plus", tab: "add entry", primary: checkIn(detailPerson, b).missed, data: "log-checkin" },
-          { label: "Edit builder", icon: "pen", onClick: () => pushEntry({ edit: "person" }) },
-          ...(detailPerson.memberId ? [{ label: "Member record", icon: "user", href: `/members?person=${encodeURIComponent(detailPerson.memberId)}` }] : []),
+          ...(!readOnly && detailPerson.archivedAt === null ? [
+            // The weekly follow-up's main action; "Add entry" is otherwise the last, often scrolled-off tab.
+            { label: "Log check-in", icon: "plus" as const, tab: "add entry", primary: checkIn(detailPerson, b).missed, data: "log-checkin" },
+            { label: "Edit builder", icon: "pen" as const, onClick: () => pushEntry({ edit: "person" }) },
+          ] : []),
+          ...(detailPerson.memberId ? [{ label: "Member record", icon: "user" as const, href: `/members?person=${encodeURIComponent(detailPerson.memberId)}` }] : []),
+          ...lifecycleActions({ kind: "person", record: detailPerson }, b, lifecycleOpts).map((l) => ({
+            label: l.label,
+            data: `lifecycle-${l.data}`,
+            onClick: l.disabled ? () => setLifecycleError(l.reason ?? "Not available.") : l.run,
+          })),
         ] : []}
         stats={detailPerson ? [{ label: "Joined", value: <time dateTime={detailPerson.joinedOn}>{fmtDate(detailPerson.joinedOn)}</time> }] : []}
         chips={detailPerson ? (() => {
@@ -699,6 +829,7 @@ function BuildspaceContent({
               reload={reload}
               onPerson={personDrawer.open}
               section={section}
+              readOnly={readOnly}
             />
           ) : null,
         }))}
@@ -736,6 +867,8 @@ function BuildspaceContent({
             project={detailProject}
             reload={reload}
             onPerson={personDrawer.open}
+            readOnly={readOnly}
+            lifecycle={lifecycleActions({ kind: "project", record: detailProject }, b, lifecycleOpts)}
           />
         ) : (
           <Empty title="This record could not be found" />

@@ -13,6 +13,38 @@ func (s *Server) routes(mux *http.ServeMux) {
 	h("POST /api/ingest/buildspace-launchpad", (*Ctx).buildspaceIngest)
 	h("PUT /api/buildspace-launchpad/schedule", (*Ctx).buildspaceSchedulePut)
 
+	// Launchpad cohorts, portal accounts, mentor roster (docs/launchpad-cohorts.md). Canonical prefix only.
+	h("POST /api/buildspace-launchpad/cohorts", (*Ctx).launchpadCohortCreate)
+	h("PATCH /api/buildspace-launchpad/cohorts/{id}", (*Ctx).launchpadCohortUpdate)
+	h("DELETE /api/buildspace-launchpad/cohorts/{id}", (*Ctx).launchpadCohortDelete)
+	h("POST /api/buildspace-launchpad/cohorts/{id}/invites", (*Ctx).launchpadInvite)
+	h("POST /api/buildspace-launchpad/cohorts/{id}/auto-assign/preview", (*Ctx).launchpadAutoAssignPreview)
+	h("POST /api/buildspace-launchpad/cohorts/{id}/auto-assign", (*Ctx).launchpadAutoAssign)
+	h("POST /api/buildspace-launchpad/accounts/{id}/resend", (*Ctx).launchpadAccountResend)
+	h("POST /api/buildspace-launchpad/accounts/{id}/disable", (*Ctx).launchpadAccountDisable)
+	h("POST /api/buildspace-launchpad/accounts/{id}/enable", (*Ctx).launchpadAccountEnable)
+	h("DELETE /api/buildspace-launchpad/accounts/{id}", (*Ctx).launchpadAccountRevoke)
+	h("POST /api/buildspace-launchpad/mentors/{contactId}/invite", (*Ctx).launchpadMentorInvite)
+	h("PUT /api/buildspace-launchpad/mentors/{contactId}/settings", (*Ctx).launchpadMentorSettings)
+	h("POST /api/buildspace-launchpad/projects/{id}/archive", (*Ctx).launchpadProjectArchive)
+	h("POST /api/buildspace-launchpad/projects/{id}/restore", (*Ctx).launchpadProjectRestore)
+	h("DELETE /api/buildspace-launchpad/projects/{id}", (*Ctx).launchpadProjectDelete)
+	h("POST /api/buildspace-launchpad/people/{id}/archive", (*Ctx).launchpadPersonArchive)
+	h("POST /api/buildspace-launchpad/people/{id}/restore", (*Ctx).launchpadPersonRestore)
+	h("DELETE /api/buildspace-launchpad/people/{id}", (*Ctx).launchpadPersonDelete)
+
+	// Builder and mentor portal: its own cookie and sessions, never an officer session.
+	h("GET /api/portal/invite", (*Ctx).portalInvitePreview)
+	h("GET /api/portal/me", (*Ctx).portalMe)
+	h("POST /api/portal/logout", (*Ctx).portalLogout)
+	h("GET /api/portal/builder", (*Ctx).portalBuilder)
+	h("POST /api/portal/builder/onboarding", (*Ctx).portalBuilderOnboarding)
+	h("PATCH /api/portal/builder/profile", (*Ctx).portalBuilderProfile)
+	h("PATCH /api/portal/builder/project", (*Ctx).portalBuilderProject)
+	h("POST /api/portal/builder/activity", (*Ctx).portalBuilderActivity)
+	h("GET /api/portal/mentor", (*Ctx).portalMentor)
+	h("POST /api/portal/mentor/activity", (*Ctx).portalMentorActivity)
+
 	// Legacy API aliases preserve request bodies and existing integrations.
 	h("GET /api/buildspace", (*Ctx).buildspaceList)
 	h("PUT /api/buildspace/projects/{id}", (*Ctx).buildspaceProjectSave)

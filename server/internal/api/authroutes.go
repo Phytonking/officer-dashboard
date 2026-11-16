@@ -53,6 +53,18 @@ func (c *Ctx) authLogin() error {
 	} else {
 		c.S.clearCookie(c.W, c.S.hostPrefixed(inviteCookieName))
 	}
+	// A Launchpad invite (builder/mentor portal) binds to whichever Discord account signs in;
+	// portal=1 asks for a portal session rather than the officer dashboard.
+	if t := c.R.URL.Query().Get("launchpad"); t != "" && len(t) <= 128 {
+		c.S.setCookie(c.W, c.S.hostPrefixed(lpInviteCookieName), auth.SHA256Hex(t), c.S.now().Add(10*60e9), 600)
+	} else {
+		c.S.clearCookie(c.W, c.S.hostPrefixed(lpInviteCookieName))
+	}
+	if c.R.URL.Query().Get("portal") == "1" {
+		c.S.setCookie(c.W, c.S.hostPrefixed(lpLoginCookieName), "1", c.S.now().Add(10*60e9), 600)
+	} else {
+		c.S.clearCookie(c.W, c.S.hostPrefixed(lpLoginCookieName))
+	}
 	http.Redirect(c.W, c.R, d.AuthURL(state, verifier), http.StatusFound)
 	return nil
 }
@@ -78,7 +90,8 @@ func (c *Ctx) authCallback() error {
 	next := auth.SafeNext(c.cookie(c.S.hostPrefixed(nextCookieName)))
 	inviteHash := c.cookie(c.S.hostPrefixed(inviteCookieName))
 	fromInvite := inviteHash != ""
-	for _, n := range []string{oauthStateName, oauthVerifier, nextCookieName, inviteCookieName} {
+	lpInvite, lpLogin := c.cookie(c.S.hostPrefixed(lpInviteCookieName)), c.cookie(c.S.hostPrefixed(lpLoginCookieName)) == "1"
+	for _, n := range []string{oauthStateName, oauthVerifier, nextCookieName, inviteCookieName, lpInviteCookieName, lpLoginCookieName} {
 		c.S.clearCookie(c.W, c.S.hostPrefixed(n))
 	}
 	if code == "" || state == "" || storedState == "" || verifier == "" || subtle.ConstantTimeCompare([]byte(state), []byte(storedState)) != 1 {
@@ -93,6 +106,14 @@ func (c *Ctx) authCallback() error {
 	if err != nil {
 		c.S.log.Error("Discord OAuth failed", "error", err)
 		return c.loginRedirect("discord")
+	}
+	// Launchpad portal sign-ins: an invite binds first, then an explicit portal sign-in.
+	if lpInvite != "" {
+		return c.portalAccept(profile.ID, lpInvite)
+	}
+	if lpLogin {
+		_, err := c.portalSignIn(profile.ID)
+		return err
 	}
 	var userID string
 	var denied string
@@ -142,6 +163,14 @@ func (c *Ctx) authCallback() error {
 	if denied == "invite_unavailable" {
 		http.Redirect(c.W, c.R, "/onboarding?unavailable=1", http.StatusFound)
 		return nil
+	}
+	if denied == "not_allowlisted" && !fromInvite {
+		// No officer account: a builder or mentor who used the officer button still gets in.
+		if id, reason, err := c.S.portalAccountFor(ctx, profile.ID); err == nil && reason == "" {
+			if err := c.S.createPortalSession(ctx, c.W, c.R, id); err == nil {
+				return c.portalRedirect("/launchpad")
+			}
+		}
 	}
 	if denied != "" {
 		return c.loginRedirect(denied)

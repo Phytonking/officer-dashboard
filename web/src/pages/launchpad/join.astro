@@ -1,0 +1,7 @@
+---
+import PortalLayout from '../../layouts/PortalLayout.astro';
+import { JoinPage } from '../../ui/portal/Join';
+---
+<PortalLayout title="Join" narrow>
+  <JoinPage client:only="preact" />
+</PortalLayout>

@@ -1265,7 +1265,7 @@ export type EventDesignNeedResponse = z.infer<typeof EventDesignNeedResponse>;
 
 export const OwnerTransferRequest = z.object({ toUserId: Id });
 
-type Auth = 'owner' | 'leadership' | 'public' | 'officer' | 'director' | `token:${(typeof SERVICE_TOKEN_SCOPES)[number]}`;
+type Auth = 'owner' | 'leadership' | 'public' | 'officer' | 'director' | 'portal' | 'portal:builder' | 'portal:mentor' | `token:${(typeof SERVICE_TOKEN_SCOPES)[number]}`;
 interface EndpointSpec {
   method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
   path: string;
@@ -1321,23 +1321,34 @@ export const BuildspaceProjectBody = z.object({
  name: z.string().trim().min(1).max(200), description: z.string().max(10000),
  track: z.enum(BUILDSPACE_TRACKS), stage: z.enum(BUILDSPACE_STAGES),
  links: z.array(z.url().refine(s => /^https?:\/\//.test(s))).max(10), mentorIds: z.array(Id).max(2),
+ /** Required when creating; a project's cohort never changes. */
+ cohortId: Id.optional(),
 });
-export const BuildspaceProject = BuildspaceProjectBody.extend({id: Id, updatedAt: z.number().int()});
+export const BuildspaceProject = BuildspaceProjectBody.extend({id: Id, updatedAt: z.number().int(), cohortId: Id, archivedAt: z.number().int().nullable()});
 export type BuildspaceProject = z.infer<typeof BuildspaceProject>;
 export const BuildspacePersonBody = z.object({
  name: z.string().trim().min(1).max(200), memberId: Id.nullable().optional(), discordId: DiscordId.nullable().optional(), projectId: Id, joinedOn: IsoDate,
+ designation: z.string().trim().max(80).optional(), pronouns: z.string().trim().max(40).optional(), bio: z.string().trim().max(500).optional(),
+ email: z.string().trim().toLowerCase().max(254).email().nullable().optional(),
 });
-export const BuildspacePerson = BuildspacePersonBody.extend({id: Id, memberId: Id.nullable(), discordId: DiscordId.nullable()});
+export const BuildspacePerson = BuildspacePersonBody.extend({
+ id: Id, memberId: Id.nullable(), discordId: DiscordId.nullable(), cohortId: Id, archivedAt: z.number().int().nullable(),
+ designation: z.string(), pronouns: z.string(), bio: z.string(), email: z.string().nullable(),
+ /** The builder's portal account, when one exists. */
+ accountId: Id.nullable(), accountStatus: z.enum(['invited', 'active', 'disabled']).nullable(),
+});
 export type BuildspacePerson = z.infer<typeof BuildspacePerson>;
 export const BuildspaceActivityBody = z.object({
  projectId: Id, personId: Id.nullable().optional(), mentorId: Id.nullable().optional(),
  kind: z.enum(['weekly','mentor','request','purchase','absence']), date: IsoDate,
  body: z.string().trim().min(1).max(10000), status: z.enum(['open','resolved','on-track','needs-help']), purchaseId: Id.nullable().optional(),
+ visibility: z.enum(['team','mentors','officers']).optional(),
 });
 export const BuildspaceActivity = BuildspaceActivityBody.extend({
  id: Id, personId: Id.nullable(), mentorId: Id.nullable(), purchaseId: Id.nullable(),
  source: z.enum(['manual','discord']), externalId: z.string().nullable(), createdAt: z.number().int(),
  purchaseTitle: z.string().nullable(), purchaseStatus: z.string().nullable(), purchaseNeededBy: IsoDate.nullable(),
+ visibility: z.enum(['team','mentors','officers']), authorAccountId: Id.nullable(), authorName: z.string().nullable(),
 });
 export type BuildspaceActivity = z.infer<typeof BuildspaceActivity>;
 /** Check-in weeks are date ranges in the club time zone; see docs/buildspace.md. */
@@ -1351,10 +1362,140 @@ export const BuildspaceSchedule = z.object({
 export type BuildspaceSchedule = z.infer<typeof BuildspaceSchedule>;
 export const BuildspaceScheduleBody = z.object({dueWeekday: z.number().int().min(0).max(6), dueTime: DueTime.nullable().optional()});
 export const BuildspaceEntryResponse = z.object({ok: z.literal(true), week: BuildspaceWeek});
+// ───────────── Launchpad cohorts, portal accounts, mentor roster (docs/launchpad-cohorts.md) ─────────────
+export const Email = z.string().trim().toLowerCase().max(254).email();
+export const LaunchpadVisibility = z.enum(['team', 'mentors', 'officers']);
+export type LaunchpadVisibility = z.infer<typeof LaunchpadVisibility>;
+export const LaunchpadCohortBody = z.object({
+ name: z.string().trim().min(1).max(100), startsOn: IsoDate, endsOn: IsoDate.nullable().optional(),
+});
+export const LaunchpadCohortPatch = LaunchpadCohortBody.partial().extend({status: z.enum(['active', 'archived']).optional()});
+export const LaunchpadCohort = z.object({
+ id: Id, name: z.string(), startsOn: IsoDate, endsOn: IsoDate.nullable(), status: z.enum(['active', 'archived']),
+ createdAt: z.number().int(), updatedAt: z.number().int(),
+ counts: z.object({projects: z.number().int(), builders: z.number().int(), invited: z.number().int()}),
+});
+export type LaunchpadCohort = z.infer<typeof LaunchpadCohort>;
+export const LaunchpadAccountStatus = z.enum(['invited', 'active', 'disabled']);
+/** A portal account as officers see it. Invite tokens are never part of it. */
+export const LaunchpadAccount = z.object({
+ id: Id, kind: z.enum(['builder', 'mentor']), email: z.string(), name: z.string(), status: LaunchpadAccountStatus,
+ cohortId: Id.nullable(), personId: Id.nullable(), contactId: Id.nullable(), discordLinked: z.boolean(),
+ inviteExpiresAt: z.number().int().nullable(), inviteExpired: z.boolean(), inviteSentAt: z.number().int().nullable(), inviteError: z.string().nullable(),
+ createdAt: z.number().int(), acceptedAt: z.number().int().nullable(), onboardedAt: z.number().int().nullable(), lastLoginAt: z.number().int().nullable(),
+});
+export type LaunchpadAccount = z.infer<typeof LaunchpadAccount>;
+export const LaunchpadInviteMethod = z.enum(['email', 'link', 'both']);
+export const LaunchpadInviteBody = z.object({
+ invites: z.array(z.object({email: Email, name: z.string().trim().max(200).optional()})).min(1).max(200),
+ method: LaunchpadInviteMethod.default('email'),
+});
+export const LaunchpadInviteLink = z.object({accountId: Id, email: z.string(), url: z.string()});
+export const LaunchpadInviteResponse = z.object({
+ accounts: z.array(LaunchpadAccount), links: z.array(LaunchpadInviteLink),
+ skipped: z.array(z.object({email: z.string(), reason: z.enum(['already_active', 'disabled', 'duplicate'])})),
+ emailConfigured: z.boolean(),
+});
+export const LaunchpadAccountResponse = z.object({account: LaunchpadAccount, link: LaunchpadInviteLink.nullable()});
+export const LaunchpadMentorInviteBody = z.object({email: Email.optional(), method: LaunchpadInviteMethod.default('email')});
+export const LaunchpadMentorSettingsBody = z.object({available: z.boolean(), maxProjects: z.number().int().min(1).max(50).nullable()});
+/** A roster row: a mentor contact with availability, cap, load and portal account state. */
+export const LaunchpadMentor = z.object({
+ id: Id, name: z.string(), org: z.string(), topics: z.array(z.string()), email: z.string(),
+ available: z.boolean(), maxProjects: z.number().int().nullable(), load: z.number().int(),
+ account: z.object({id: Id, status: LaunchpadAccountStatus, inviteExpired: z.boolean(), lastLoginAt: z.number().int().nullable()}).nullable(),
+});
+export type LaunchpadMentor = z.infer<typeof LaunchpadMentor>;
+export const LaunchpadAssignment = z.object({projectId: Id, mentorId: Id});
+export const LaunchpadAutoAssignPreview = z.object({
+ assignments: z.array(LaunchpadAssignment), unassigned: z.array(Id),
+ mentors: z.array(z.object({id: Id, loadBefore: z.number().int(), loadAfter: z.number().int(), hasAccount: z.boolean()})),
+});
+export const LaunchpadAutoAssignBody = z.object({assignments: z.array(LaunchpadAssignment).min(1).max(500)});
+export const LaunchpadAutoAssignResponse = z.object({ok: z.literal(true), assigned: z.number().int()});
+export const LaunchpadOk = z.object({ok: z.literal(true)});
+export const LaunchpadQuery = z.object({cohort: Id.optional(), archived: z.enum(['0', '1']).optional()});
+
+// Portal (builder / mentor accounts; their own cookie, never an officer session).
+export const PortalInvitePreview = z.object({
+ valid: z.boolean(), reason: z.enum(['expired', 'used', 'disabled', 'not_found']).nullable(),
+ kind: z.enum(['builder', 'mentor']).nullable(), cohortName: z.string().nullable(), emailHint: z.string().nullable(), name: z.string().nullable(),
+});
+export const PortalInviteQuery = z.object({token: z.string().min(1).max(128)});
+export const PortalMe = z.object({
+ account: z.object({id: Id, kind: z.enum(['builder', 'mentor']), name: z.string(), email: z.string(), status: LaunchpadAccountStatus, onboarded: z.boolean()}),
+ cohort: z.object({id: Id, name: z.string(), status: z.enum(['active', 'archived'])}).nullable(),
+ officer: z.boolean(),
+});
+export type PortalMe = z.infer<typeof PortalMe>;
+export const PortalPerson = z.object({
+ id: Id, name: z.string(), pronouns: z.string(), designation: z.string(), bio: z.string(), joinedOn: IsoDate,
+});
+export type PortalPerson = z.infer<typeof PortalPerson>;
+export const PortalMentorCard = z.object({id: Id, name: z.string(), org: z.string(), topics: z.array(z.string())});
+export const PortalProject = z.object({
+ id: Id, name: z.string(), description: z.string(), track: z.enum(BUILDSPACE_TRACKS), stage: z.enum(BUILDSPACE_STAGES),
+ links: z.array(z.string()), archived: z.boolean(),
+});
+export type PortalProject = z.infer<typeof PortalProject>;
+export const PortalActivity = z.object({
+ id: Id, projectId: Id, personId: Id.nullable(), mentorId: Id.nullable(),
+ kind: z.enum(['weekly', 'mentor', 'request', 'purchase', 'absence']), date: IsoDate, body: z.string(),
+ status: z.enum(['open', 'resolved', 'on-track', 'needs-help']), visibility: LaunchpadVisibility,
+ authorName: z.string().nullable(), createdAt: z.number().int(),
+});
+export type PortalActivity = z.infer<typeof PortalActivity>;
+export const PortalWeekStatus = z.enum(['done', 'awaiting', 'past-due', 'not-joined']);
+export const PortalBuilderResponse = z.object({
+ cohort: z.object({id: Id, name: z.string(), status: z.enum(['active', 'archived']), startsOn: IsoDate, endsOn: IsoDate.nullable()}),
+ onboarded: z.boolean(), readOnly: z.boolean(),
+ me: PortalPerson.nullable(), email: z.string(),
+ project: PortalProject.nullable(), teammates: z.array(PortalPerson), mentors: z.array(PortalMentorCard),
+ activity: z.array(PortalActivity), schedule: BuildspaceSchedule, thisWeek: PortalWeekStatus,
+ joinable: z.array(z.object({id: Id, name: z.string(), track: z.enum(BUILDSPACE_TRACKS), description: z.string(), builders: z.array(z.string())})),
+});
+export type PortalBuilderResponse = z.infer<typeof PortalBuilderResponse>;
+export const PortalProfileBody = z.object({
+ name: z.string().trim().min(1).max(200), pronouns: z.string().trim().max(40), designation: z.string().trim().max(80), bio: z.string().trim().max(500),
+});
+export const PortalNewProject = z.object({
+ name: z.string().trim().min(1).max(200), description: z.string().max(10000), track: z.enum(BUILDSPACE_TRACKS),
+ links: z.array(z.url().refine(s => /^https?:\/\//.test(s))).max(10),
+});
+export const PortalOnboardingBody = PortalProfileBody.extend({
+ project: z.discriminatedUnion('mode', [
+  z.object({mode: z.literal('new')}).extend(PortalNewProject.shape),
+  z.object({mode: z.literal('join'), projectId: Id}),
+ ]),
+});
+export const PortalProjectPatch = PortalNewProject.extend({stage: z.enum(BUILDSPACE_STAGES)});
+export const PortalBuilderActivityBody = z.object({
+ kind: z.enum(['weekly', 'request', 'absence']), date: IsoDate, body: z.string().trim().min(1).max(10000),
+ status: z.enum(['open', 'on-track', 'needs-help']),
+});
+export const PortalMentorProject = PortalProject.extend({
+ cohortName: z.string(), builders: z.array(PortalPerson.extend({thisWeek: PortalWeekStatus})),
+ coMentors: z.array(PortalMentorCard), activity: z.array(PortalActivity),
+ flags: z.object({awaiting: z.number().int(), needsHelp: z.boolean(), openRequests: z.number().int()}),
+});
+export type PortalMentorProject = z.infer<typeof PortalMentorProject>;
+export const PortalMentorResponse = z.object({
+ mentor: PortalMentorCard, projects: z.array(PortalMentorProject), schedule: BuildspaceSchedule,
+});
+export type PortalMentorResponse = z.infer<typeof PortalMentorResponse>;
+export const PortalMentorActivityBody = z.object({
+ projectId: Id, personId: Id.nullable().optional(), date: IsoDate, body: z.string().trim().min(1).max(10000),
+ status: z.enum(['on-track', 'needs-help']), visibility: z.enum(['team', 'mentors']),
+});
+
 export const BuildspaceResponse = z.object({
  projects: z.array(BuildspaceProject), people: z.array(BuildspacePerson),
- mentors: z.array(z.object({id: Id, name: z.string(), org: z.string(), topics: z.array(z.string())})),
+ mentors: z.array(LaunchpadMentor),
  activity: z.array(BuildspaceActivity), weekStart: IsoDate, weekDue: IsoDate, today: IsoDate, schedule: BuildspaceSchedule,
+ /** All cohorts, newest first; the register below is for `cohortId`. Null only when no cohort exists yet. */
+ cohorts: z.array(LaunchpadCohort), cohortId: Id.nullable(),
+ /** Builder portal accounts of the selected cohort (invites included). */
+ accounts: z.array(LaunchpadAccount),
 });
 export type BuildspaceData = z.infer<typeof BuildspaceResponse>;
 export const BuildspaceIngest = z.object({
@@ -1363,13 +1504,41 @@ export const BuildspaceIngest = z.object({
 });
 
 export const ENDPOINTS = {
- buildspaceList: {method: 'GET', path: '/api/buildspace-launchpad', auth: 'officer', response: BuildspaceResponse},
+ buildspaceList: {method: 'GET', path: '/api/buildspace-launchpad', auth: 'officer', query: LaunchpadQuery, response: BuildspaceResponse},
  buildspaceProjectSave: {method: 'PUT', path: '/api/buildspace-launchpad/projects/:id', auth: 'officer', body: BuildspaceProjectBody, response: z.object({project: BuildspaceProject})},
  buildspacePersonSave: {method: 'PUT', path: '/api/buildspace-launchpad/people/:id', auth: 'officer', body: BuildspacePersonBody, response: z.object({person: BuildspacePerson})},
  buildspaceActivityCreate: {method: 'POST', path: '/api/buildspace-launchpad/activity', auth: 'officer', body: BuildspaceActivityBody, response: BuildspaceEntryResponse},
  buildspaceActivityResolve: {method: 'POST', path: '/api/buildspace-launchpad/activity/:id/resolve', auth: 'officer', response: z.object({ok: z.literal(true)})},
  buildspaceIngest: {method: 'POST', path: '/api/ingest/buildspace-launchpad', auth: 'token:ingest:buildspace', body: BuildspaceIngest, response: BuildspaceEntryResponse},
  buildspaceSchedulePut: {method: 'PUT', path: '/api/buildspace-launchpad/schedule', auth: 'leadership', body: BuildspaceScheduleBody, response: BuildspaceSchedule},
+ launchpadCohortCreate: {method: 'POST', path: '/api/buildspace-launchpad/cohorts', auth: 'director', body: LaunchpadCohortBody, response: z.object({cohort: LaunchpadCohort})},
+ launchpadCohortUpdate: {method: 'PATCH', path: '/api/buildspace-launchpad/cohorts/:id', auth: 'director', body: LaunchpadCohortPatch, response: z.object({cohort: LaunchpadCohort})},
+ launchpadCohortDelete: {method: 'DELETE', path: '/api/buildspace-launchpad/cohorts/:id', auth: 'director', response: LaunchpadOk},
+ launchpadInvite: {method: 'POST', path: '/api/buildspace-launchpad/cohorts/:id/invites', auth: 'officer', body: LaunchpadInviteBody, response: LaunchpadInviteResponse},
+ launchpadAccountResend: {method: 'POST', path: '/api/buildspace-launchpad/accounts/:id/resend', auth: 'officer', response: LaunchpadAccountResponse},
+ launchpadAccountDisable: {method: 'POST', path: '/api/buildspace-launchpad/accounts/:id/disable', auth: 'director', response: LaunchpadAccountResponse},
+ launchpadAccountEnable: {method: 'POST', path: '/api/buildspace-launchpad/accounts/:id/enable', auth: 'director', response: LaunchpadAccountResponse},
+ launchpadAccountRevoke: {method: 'DELETE', path: '/api/buildspace-launchpad/accounts/:id', auth: 'officer', response: LaunchpadOk},
+ launchpadMentorInvite: {method: 'POST', path: '/api/buildspace-launchpad/mentors/:contactId/invite', auth: 'director', body: LaunchpadMentorInviteBody, response: LaunchpadAccountResponse},
+ launchpadMentorSettings: {method: 'PUT', path: '/api/buildspace-launchpad/mentors/:contactId/settings', auth: 'officer', body: LaunchpadMentorSettingsBody, response: z.object({mentor: LaunchpadMentor})},
+ launchpadAutoAssignPreview: {method: 'POST', path: '/api/buildspace-launchpad/cohorts/:id/auto-assign/preview', auth: 'officer', response: LaunchpadAutoAssignPreview},
+ launchpadAutoAssign: {method: 'POST', path: '/api/buildspace-launchpad/cohorts/:id/auto-assign', auth: 'officer', body: LaunchpadAutoAssignBody, response: LaunchpadAutoAssignResponse},
+ launchpadProjectArchive: {method: 'POST', path: '/api/buildspace-launchpad/projects/:id/archive', auth: 'officer', response: LaunchpadOk},
+ launchpadProjectRestore: {method: 'POST', path: '/api/buildspace-launchpad/projects/:id/restore', auth: 'officer', response: LaunchpadOk},
+ launchpadProjectDelete: {method: 'DELETE', path: '/api/buildspace-launchpad/projects/:id', auth: 'director', response: LaunchpadOk},
+ launchpadPersonArchive: {method: 'POST', path: '/api/buildspace-launchpad/people/:id/archive', auth: 'officer', response: LaunchpadOk},
+ launchpadPersonRestore: {method: 'POST', path: '/api/buildspace-launchpad/people/:id/restore', auth: 'officer', response: LaunchpadOk},
+ launchpadPersonDelete: {method: 'DELETE', path: '/api/buildspace-launchpad/people/:id', auth: 'director', response: LaunchpadOk},
+ portalInvitePreview: {method: 'GET', path: '/api/portal/invite', auth: 'public', query: PortalInviteQuery, response: PortalInvitePreview},
+ portalMe: {method: 'GET', path: '/api/portal/me', auth: 'portal', response: PortalMe},
+ portalLogout: {method: 'POST', path: '/api/portal/logout', auth: 'portal', response: LaunchpadOk},
+ portalBuilder: {method: 'GET', path: '/api/portal/builder', auth: 'portal:builder', response: PortalBuilderResponse},
+ portalBuilderOnboarding: {method: 'POST', path: '/api/portal/builder/onboarding', auth: 'portal:builder', body: PortalOnboardingBody, response: LaunchpadOk},
+ portalBuilderProfile: {method: 'PATCH', path: '/api/portal/builder/profile', auth: 'portal:builder', body: PortalProfileBody, response: z.object({me: PortalPerson})},
+ portalBuilderProject: {method: 'PATCH', path: '/api/portal/builder/project', auth: 'portal:builder', body: PortalProjectPatch, response: z.object({project: PortalProject})},
+ portalBuilderActivity: {method: 'POST', path: '/api/portal/builder/activity', auth: 'portal:builder', body: PortalBuilderActivityBody, response: BuildspaceEntryResponse},
+ portalMentor: {method: 'GET', path: '/api/portal/mentor', auth: 'portal:mentor', response: PortalMentorResponse},
+ portalMentorActivity: {method: 'POST', path: '/api/portal/mentor/activity', auth: 'portal:mentor', body: PortalMentorActivityBody, response: BuildspaceEntryResponse},
   membersList: {method:'GET',path:'/api/members',auth:'officer',query:MembersQuery,response:MembersResponse},
   membersExport: {method:'GET',path:'/api/members/export',auth:'director',query:MembersQuery,response:'csv'},
   memberDetail: {method:'GET',path:'/api/members/:id',auth:'officer',response:MemberResponse},
