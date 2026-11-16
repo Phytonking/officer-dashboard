@@ -171,7 +171,9 @@ export default function EventsView() {
   const now = Date.now();
   const ready = state.status === 'ready' ? state.data : null;
   const total = all.status === 'ready' ? all.data.items.length : null;
-  const upcoming = all.status === 'ready' ? all.data.items.filter((e) => new Date(e.startsAt).getTime() >= now).length : 0;
+  // Drafts and cancelled events are not on the calendar: count them as the Upcoming tile does.
+  const live = (e: EventListItem) => e.status !== 'draft' && e.status !== 'cancelled';
+  const upcoming = all.status === 'ready' ? all.data.items.filter((e) => live(e) && new Date(e.startsAt).getTime() >= now).length : 0;
   const period =
     state.status === 'loading'
       ? 'Loading events…'
@@ -187,7 +189,6 @@ export default function EventsView() {
                 ? plural(ready!.items.length, 'matching event')
                 : `${plural(ready!.items.length, 'event')} · ${upcoming} upcoming`;
 
-  const live = (e: EventListItem) => e.status !== 'draft' && e.status !== 'cancelled';
   const items = all.status === 'ready' ? all.data.items : [];
   const stats = all.status === 'ready' && {
     upcoming: items.filter((e) => live(e) && new Date(e.startsAt).getTime() >= now).length,

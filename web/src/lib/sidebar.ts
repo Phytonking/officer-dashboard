@@ -77,11 +77,39 @@ export function syncSidebarFromServer(w: number) {
 }
 export const setResizing = (on: boolean) => { busy = on; document.documentElement.classList.toggle('is-resizing', on); };
 
+let pending: number | null = null;
+let flushOnLeave = false;
+/**
+ * Leaving the page inside the debounce window (resize, then click a nav link at once) would drop
+ * the save, and the next page's SIDEBARWAIT would then restore the old server width. Send the
+ * pending width with keepalive so it outlives this document.
+ */
+function flushPendingSave() {
+  if (!timer || pending === null) return;
+  clearTimeout(timer);
+  timer = 0;
+  const w = pending;
+  pending = null;
+  fetch('/api/me/prefs', {
+    method: 'PUT',
+    credentials: 'same-origin',
+    keepalive: true,
+    headers: { accept: 'application/json', 'content-type': 'application/json' },
+    body: JSON.stringify({ sidebarWidth: w }),
+  }).catch(() => {});
+}
+
 /** Save after the user stops adjusting. Failures keep the local width for this device. */
 export function saveSidebarWidth(w: number, save: (w: number) => Promise<unknown>) {
+  if (!flushOnLeave) {
+    flushOnLeave = true;
+    window.addEventListener('pagehide', flushPendingSave);
+  }
   clearTimeout(timer);
+  pending = w;
   timer = window.setTimeout(() => {
     timer = 0;
+    pending = null;
     save(w).catch(() => {});
   }, 400);
 }

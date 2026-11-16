@@ -192,6 +192,13 @@ func TestDesignRequestFromEvent(t *testing.T) {
 	}
 	expectStatus(t, "unknown event", e.get("/api/events/nope/design-request-draft", e.officer()), 404)
 
+	// A linked Luma page is the RSVP link the brief asks for.
+	e.mustOK(e.do("PATCH", "/api/events/event-hack-night", map[string]any{"lumaUrl": "https://lu.ma/hack-night-rsvp"}, e.officer()))
+	linked := e.mustOK(e.get("/api/events/event-hack-night/design-request-draft", e.officer()))
+	if !strings.Contains(linked.str("draft", "brief"), "RSVP: https://lu.ma/hack-night-rsvp") {
+		t.Fatalf("linked draft brief %s", linked.Raw)
+	}
+
 	plain := e.mustOK(e.post("/api/events/event-hack-night/design-requests", nil, e.officer()))
 	if plain.str("request", "title") != "Hack Night promo" || plain.str("request", "event", "id") != "event-hack-night" || plain.str("request", "dueDate") != "2026-11-06" {
 		t.Fatalf("plain %s", plain.Raw)

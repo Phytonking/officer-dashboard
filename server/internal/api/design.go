@@ -875,7 +875,10 @@ func (s *Server) designDraftFor(ctx context.Context, userID string, e *store.Eve
 		brief += " at " + strings.TrimSpace(*e.Location)
 	}
 	d.Brief = brief + ". Include the date, time, place and RSVP link."
-	if e.URL != nil && *e.URL != "" {
+	// The linked Luma page is the RSVP link; older imported events only carry URL.
+	if e.LumaURL != nil && *e.LumaURL != "" {
+		d.Brief += fmt.Sprintf(" RSVP: %s", *e.LumaURL)
+	} else if e.URL != nil && *e.URL != "" {
 		d.Brief += fmt.Sprintf(" RSVP: %s", *e.URL)
 	}
 	d.Title = truncRunes(d.Title, 200)
