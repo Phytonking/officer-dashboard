@@ -170,8 +170,10 @@ test.beforeAll(async () => {
     const u = new URL(req.url ?? '/', REDIRECT);
     const code = u.searchParams.get('code');
     const got = code ? `code ${code.slice(0, 6)}… (state ${u.searchParams.get('state')})` : `error ${u.searchParams.get('error')}`;
-    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-    res.end(`<!doctype html><body style="font:16px system-ui;padding:2rem"><p style="color:#666">Agent's local callback (127.0.0.1:53682)</p><h1>Connected?</h1><p>The agent received: <strong data-callback>${got}</strong></p></body>`);
+    // Echoed into HTML: escape it, as any real callback page must.
+    const safe = got.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'" });
+    res.end(`<!doctype html><body style="font:16px system-ui;padding:2rem"><p style="color:#666">Agent's local callback (127.0.0.1:53682)</p><h1>Connected?</h1><p>The agent received: <strong data-callback>${safe}</strong></p></body>`);
   });
   await new Promise<void>((ok) => callback!.listen(53682, '127.0.0.1', ok));
 });

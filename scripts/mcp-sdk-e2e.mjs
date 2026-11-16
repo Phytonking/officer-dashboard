@@ -14,6 +14,13 @@ const BASE = process.env.BASE ?? 'http://localhost:8090';
 const AS = process.argv[2] ?? 'officer';
 const REDIRECT = 'http://127.0.0.1:53682/callback';
 
+/** Decodes the HTML entities html/template emits, in one pass (no double unescaping). */
+function decodeEntities(s) {
+  const named = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+  return s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e) =>
+    e[0] === '#' ? String.fromCodePoint(e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : Number(e.slice(1))) : (named[e.toLowerCase()] ?? m));
+}
+
 // ── the officer's browser ──
 async function browserSession() {
   const r = await fetch(`${BASE}/auth/dev`, { method: 'POST', redirect: 'manual', body: new URLSearchParams({ as: AS, next: '/' }) });
@@ -46,9 +53,10 @@ const provider = {
     const page = await fetch(url, { headers: { cookie }, redirect: 'manual' });
     const html = await page.text();
     if (page.status !== 200) throw new Error(`consent page ${page.status}: ${html}`);
-    log('consent page:', html.match(/<h1>(.*?)<\/h1>/s)[1].replace(/<[^>]+>/g, ''));
+    // The <title> is plain text ("Connect <agent> · CSEED"): no tag stripping needed.
+    log('consent page:', decodeEntities(html.match(/<title>([^<]*)<\/title>/)?.[1] ?? '?'));
     const form = new URLSearchParams();
-    for (const m of html.matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)">/g)) form.set(m[1], m[2].replace(/&amp;/g, '&').replace(/&#43;/g, '+').replace(/&#34;/g, '"'));
+    for (const m of html.matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)">/g)) form.set(m[1], decodeEntities(m[2]));
     form.set('decision', 'allow');
     const allow = await fetch(`${BASE}/oauth/authorize`, { method: 'POST', redirect: 'manual', headers: { cookie, origin: BASE }, body: form });
     const back = new URL(allow.headers.get('location'));
