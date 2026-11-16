@@ -175,9 +175,10 @@ func (s *Server) routes(mux *http.ServeMux) {
 	h("POST /oauth/authorize", (*Ctx).oauthAuthorizePost)
 	h("POST /oauth/token", (*Ctx).oauthToken)
 	h("POST /mcp", (*Ctx).mcpPost)
+	h("POST /mcp/{$}", (*Ctx).mcpPost) // a pasted URL often ends in "/"
 	h("GET /mcp", (*Ctx).mcpNoStream)
 	h("DELETE /mcp", (*Ctx).mcpNoStream)
-	for _, p := range []string{"/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp", "/.well-known/oauth-authorization-server", "/oauth/register", "/oauth/token", "/mcp"} {
+	for _, p := range []string{"/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp", "/.well-known/oauth-authorization-server", "/oauth/register", "/oauth/token", "/mcp", "/mcp/{$}"} {
 		h("OPTIONS "+p, (*Ctx).corsPreflight)
 	}
 	h("GET /api/me/agents", (*Ctx).agentsList)

@@ -23,11 +23,13 @@ import (
 	"net/http"
 	"net/textproto"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"officerdashboard/internal/auth"
+	"officerdashboard/internal/files"
 	"officerdashboard/internal/store"
 )
 
@@ -48,6 +50,10 @@ type mcpTool struct {
 	Response    string          `json:"response"`  // "json" | "text"
 	Annotations json.RawMessage `json:"annotations"`
 	InputSchema json.RawMessage `json:"inputSchema"`
+
+	// From InputSchema: the argument names the tool takes, and the required ones.
+	args     map[string]bool
+	required []string
 }
 
 var (
@@ -64,12 +70,26 @@ func init() {
 	}
 	mcpTools = f.Tools
 	for i := range mcpTools {
-		mcpToolByName[mcpTools[i].Name] = &mcpTools[i]
+		t := &mcpTools[i]
+		var schema struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+			Required   []string                   `json:"required"`
+		}
+		if err := json.Unmarshal(t.InputSchema, &schema); err != nil {
+			panic("mcp_tools.json " + t.Name + ": " + err.Error())
+		}
+		t.args = map[string]bool{}
+		for k := range schema.Properties {
+			t.args[k] = true
+		}
+		t.required = schema.Required
+		mcpToolByName[t.Name] = t
 	}
 }
 
 const (
 	mcpMaxBody     = 16 << 20 // base64 of a 10 MB receipt fits
+	mcpMaxBatch    = 20       // JSON-RPC batches (dropped from MCP in 2025-06-18) stay small
 	mcpMaxResult   = 256 << 10
 	mcpLatestProto = "2025-11-25"
 	mcpInstruction = "You are acting as a CSEED club officer on the CSEED Officer Dashboard, with exactly that officer's permissions. " +
@@ -157,6 +177,12 @@ func (c *Ctx) mcpPost() error {
 		}
 		return err
 	}
+	// Clients send the negotiated version on every request after initialize (Streamable
+	// HTTP); an unsupported one is a 400.
+	if v := c.R.Header.Get("Mcp-Protocol-Version"); v != "" && !mcpProtocols[v] {
+		writeJSON(c.W, 400, rpcResponse{JSONRPC: "2.0", ID: json.RawMessage("null"), Error: &rpcError{-32600, "Unsupported MCP-Protocol-Version " + v}})
+		return nil
+	}
 	raw, err := io.ReadAll(http.MaxBytesReader(c.W, c.R.Body, mcpMaxBody))
 	if err != nil {
 		return fail(http.StatusRequestEntityTooLarge, "too_large", "Request too large")
@@ -174,6 +200,10 @@ func (c *Ctx) mcpPost() error {
 	}
 	if err != nil {
 		writeJSON(c.W, 400, rpcResponse{JSONRPC: "2.0", ID: json.RawMessage("null"), Error: &rpcError{-32700, "Parse error"}})
+		return nil
+	}
+	if len(msgs) > mcpMaxBatch {
+		writeJSON(c.W, 400, rpcResponse{JSONRPC: "2.0", ID: json.RawMessage("null"), Error: &rpcError{-32600, fmt.Sprintf("Batch too large: at most %d messages", mcpMaxBatch)}})
 		return nil
 	}
 	var out []rpcResponse
@@ -300,6 +330,9 @@ func (c *Ctx) mcpCall(p principal, t *mcpTool, args map[string]json.RawMessage) 
 	if !auth.HasRole(p.user.Role, t.MinRole) {
 		return toolText(fmt.Sprintf("Not allowed: %s requires the %s role and you are %s.", t.Name, t.MinRole, p.user.Role), true)
 	}
+	if msg := t.checkArgs(args); msg != "" {
+		return toolText(msg, true)
+	}
 	// Path parameters.
 	path := t.Path
 	for _, seg := range strings.Split(t.Path, "/") {
@@ -309,6 +342,9 @@ func (c *Ctx) mcpCall(p principal, t *mcpTool, args map[string]json.RawMessage) 
 		vs, ok := argString(args[seg[1:]])
 		if !ok || len(vs) != 1 || vs[0] == "" {
 			return toolText("Missing required argument: "+seg[1:], true)
+		}
+		if vs[0] == "." || vs[0] == ".." {
+			return toolText("Invalid "+seg[1:]+": "+vs[0], true)
 		}
 		path = strings.Replace(path, seg, url.PathEscape(vs[0]), 1)
 	}
@@ -342,7 +378,8 @@ func (c *Ctx) mcpCall(p principal, t *mcpTool, args map[string]json.RawMessage) 
 	case t.Method == http.MethodPost || t.Method == http.MethodPut || t.Method == http.MethodPatch:
 		body, contentType = strings.NewReader("{}"), "application/json"
 	}
-	ctx := context.WithValue(context.WithoutCancel(c.Context()), agentPrincipalKey{}, p)
+	// The request context: a client that hangs up cancels its call, like any API request.
+	ctx := context.WithValue(c.Context(), agentPrincipalKey{}, p)
 	req, err := http.NewRequestWithContext(ctx, t.Method, target, body)
 	if err != nil {
 		return toolText("Invalid arguments: "+err.Error(), true)
@@ -354,11 +391,27 @@ func (c *Ctx) mcpCall(p principal, t *mcpTool, args map[string]json.RawMessage) 
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
+	// Tool calls skip the outer middleware, so draw on the same per-IP upload/import budget
+	// the API routes do.
+	if kind := limitedRoute(req); kind != "" {
+		if ip, local := clientIP(c.R, c.S.trustedProxies); !local {
+			l := c.S.authLimit
+			if kind == "upload" {
+				l = c.S.uploadLimit
+			}
+			if ok, wait := l.allow(ip); !ok {
+				return toolText(fmt.Sprintf("Rate limited: too many uploads/imports; try again in %d seconds.", int(wait/time.Second)+1), true)
+			}
+		}
+	}
 	rec := &recorder{header: http.Header{}, status: 200}
 	c.S.inner.ServeHTTP(rec, req)
 	text := rec.buf.String()
 	if rec.truncated {
 		text += "\n…(truncated: narrow the query or use limit/cursor)"
+	}
+	if rec.status >= 300 && rec.status < 400 {
+		return toolText(fmt.Sprintf("HTTP %d: the API redirected (%s); check the arguments", rec.status, rec.header.Get("Location")), true)
 	}
 	if rec.status >= 400 {
 		var e struct {
@@ -385,6 +438,44 @@ func (c *Ctx) mcpCall(p principal, t *mcpTool, args map[string]json.RawMessage) 
 	return toolText(text, false)
 }
 
+// checkArgs refuses unknown and missing arguments. Without it, request fields put next to
+// `body` instead of inside it would be dropped, and an update would "succeed" changing nothing.
+func (t *mcpTool) checkArgs(args map[string]json.RawMessage) string {
+	var unknown, missing []string
+	for k := range args {
+		if !t.args[k] {
+			unknown = append(unknown, k)
+		}
+	}
+	for _, k := range t.required {
+		if raw, ok := args[k]; !ok || string(raw) == "null" {
+			missing = append(missing, k)
+		}
+	}
+	if len(unknown) == 0 && len(missing) == 0 {
+		return ""
+	}
+	sort.Strings(unknown)
+	valid := make([]string, 0, len(t.args))
+	for k := range t.args {
+		valid = append(valid, k)
+	}
+	sort.Strings(valid)
+	var b strings.Builder
+	b.WriteString("Invalid arguments for " + t.Name + ".")
+	if len(unknown) > 0 {
+		b.WriteString(" Unknown: " + strings.Join(unknown, ", ") + ".")
+	}
+	if len(missing) > 0 {
+		b.WriteString(" Missing: " + strings.Join(missing, ", ") + ".")
+	}
+	b.WriteString(" It takes: " + strings.Join(valid, ", ") + ".")
+	if t.args["body"] && len(unknown) > 0 {
+		b.WriteString(" Request fields go inside `body`.")
+	}
+	return b.String()
+}
+
 // mcpMultipart builds the multipart/form-data body of an upload tool.
 func mcpMultipart(t *mcpTool, args map[string]json.RawMessage) (io.Reader, string, error) {
 	var buf bytes.Buffer
@@ -407,6 +498,9 @@ func mcpMultipart(t *mcpTool, args map[string]json.RawMessage) (io.Reader, strin
 		var content string
 		if json.Unmarshal(args["content"], &content) != nil || content == "" {
 			return nil, "", errors.New("missing required argument: content (the CSV text)")
+		}
+		if len(content) > csvMaxBytes {
+			return nil, "", fmt.Errorf("the CSV is %.1f MB; the maximum is %d MB", float64(len(content))/(1<<20), csvMaxBytes>>20)
 		}
 		data, mimeType = []byte(content), "text/csv"
 		if filename == "" {
@@ -433,6 +527,12 @@ func mcpMultipart(t *mcpTool, args map[string]json.RawMessage) (io.Reader, strin
 					return nil, "", errors.New("contentBase64 is not valid base64")
 				}
 			}
+		}
+		if len(data) == 0 {
+			return nil, "", errors.New("the file is empty")
+		}
+		if len(data) > files.MaxBytes {
+			return nil, "", fmt.Errorf("the file is %.1f MB; the maximum is %d MB", float64(len(data))/(1<<20), files.MaxBytes>>20)
 		}
 		if filename == "" {
 			filename = "upload"

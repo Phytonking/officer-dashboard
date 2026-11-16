@@ -22,6 +22,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode"
 
 	"officerdashboard/internal/auth"
 	"officerdashboard/internal/store"
@@ -175,18 +176,7 @@ func (c *Ctx) oauthRegister() error {
 	if body.AuthMethod != "" && body.AuthMethod != "none" {
 		return c.oauthError(400, "invalid_client_metadata", "Only public clients (token_endpoint_auth_method none) are supported")
 	}
-	name := strings.TrimSpace(strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
-			return -1
-		}
-		return r
-	}, body.ClientName))
-	if name == "" {
-		name = "MCP client"
-	}
-	if r := []rune(name); len(r) > 80 {
-		name = string(r[:80])
-	}
+	name := cleanClientName(body.ClientName)
 	cl := store.OAuthClient{ID: "mcp_" + auth.RandomToken(16), Name: name, RedirectURIs: body.RedirectURIs, CreatedAt: store.Ms(c.S.nowMs())}
 	if err := c.S.db.Write(c.Context(), func(w *store.Queries) error { return w.InsertOAuthClient(c.Context(), cl) }); err != nil {
 		return err
@@ -203,6 +193,46 @@ func (c *Ctx) oauthRegister() error {
 		"scope":                      mcpScope,
 	})
 	return nil
+}
+
+// cleanClientName makes a self-asserted client name safe to show on the consent page:
+// no control or invisible format characters (a right-to-left override could make
+// "evil" read as something else), single spaces, at most 80 characters.
+func cleanClientName(raw string) string {
+	var b strings.Builder
+	space := false
+	for _, r := range raw {
+		switch {
+		case unicode.IsSpace(r):
+			space = b.Len() > 0
+			continue
+		case unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || !unicode.IsPrint(r):
+			continue
+		}
+		if space {
+			b.WriteByte(' ')
+			space = false
+		}
+		b.WriteRune(r)
+	}
+	name := b.String()
+	if r := []rune(name); len(r) > 80 {
+		name = string(r[:80])
+	}
+	if name == "" {
+		name = "MCP client"
+	}
+	return name
+}
+
+// resourceOK accepts a missing RFC 8707 resource indicator or one naming this server.
+func (c *Ctx) resourceOK(v string) bool {
+	if v == "" {
+		return true
+	}
+	base := c.baseURL()
+	v = strings.TrimRight(v, "/")
+	return v == base || v == base+"/mcp"
 }
 
 // authzRequest is a validated /oauth/authorize request.
@@ -235,13 +265,26 @@ func (c *Ctx) parseAuthorize(v url.Values) (*authzRequest, string, string) {
 		return nil, "", "The app asked to return to an address it did not register. Reconnect it from your agent and try again."
 	}
 	a := &authzRequest{client: cl, redirectURI: ru, state: v.Get("state"), challenge: v.Get("code_challenge"), mode: v.Get("code_challenge_method")}
+	if len(a.state) > 1024 {
+		a.state = ""
+		return a, "invalid_request", ""
+	}
 	switch {
 	case v.Get("response_type") != "code":
 		return a, "unsupported_response_type", ""
 	case a.challenge == "" || a.mode != "S256" || len(a.challenge) < 43 || len(a.challenge) > 128:
 		return a, "invalid_request", ""
+	case !c.resourceOK(v.Get("resource")):
+		return a, "invalid_target", ""
 	}
 	return a, "", ""
+}
+
+var authzErrorText = map[string]string{
+	"invalid_request":           "PKCE is required: send code_challenge (43-128 characters) with code_challenge_method=S256; state may be at most 1024 characters",
+	"unsupported_response_type": "Only response_type=code is supported",
+	"invalid_target":            "The resource parameter must name this dashboard's /mcp endpoint",
+	"access_denied":             "The officer declined",
 }
 
 // redirectBack sends the browser to the client's redirect URI with the given parameters.
@@ -252,6 +295,9 @@ func (c *Ctx) redirectBack(a *authzRequest, params url.Values) error {
 		for _, v := range vs {
 			q.Set(k, v)
 		}
+	}
+	if e := params.Get("error"); e != "" && params.Get("error_description") == "" && authzErrorText[e] != "" {
+		q.Set("error_description", authzErrorText[e])
 	}
 	if a.state != "" {
 		q.Set("state", a.state)
@@ -341,7 +387,10 @@ func (c *Ctx) oauthAuthorizeGet() error {
 		return c.renderConsent(400, map[string]any{"Error": page})
 	}
 	if oerr != "" {
-		return c.redirectBack(a, url.Values{"error": {oerr}})
+		// Never bounce an invalid request to the client's redirect URI: any visitor can
+		// register a client, so that would make /oauth/authorize an open redirect
+		// (RFC 9700 §4.11.2). The officer sees why instead.
+		return c.renderConsent(400, map[string]any{"Error": "The app sent an invalid sign-in request: " + authzErrorText[oerr] + "."})
 	}
 	u, why, err := c.authorizeUser()
 	if err != nil {
@@ -378,7 +427,10 @@ func (c *Ctx) oauthAuthorizePost() error {
 		return c.renderConsent(400, map[string]any{"Error": page})
 	}
 	if oerr != "" {
-		return c.redirectBack(a, url.Values{"error": {oerr}})
+		// Never bounce an invalid request to the client's redirect URI: any visitor can
+		// register a client, so that would make /oauth/authorize an open redirect
+		// (RFC 9700 §4.11.2). The officer sees why instead.
+		return c.renderConsent(400, map[string]any{"Error": "The app sent an invalid sign-in request: " + authzErrorText[oerr] + "."})
 	}
 	u, why, err := c.authorizeUser()
 	if err != nil {
@@ -391,7 +443,7 @@ func (c *Ctx) oauthAuthorizePost() error {
 		return c.renderConsent(403, map[string]any{"Error": why})
 	}
 	if c.R.PostForm.Get("decision") != "allow" {
-		return c.redirectBack(a, url.Values{"error": {"access_denied"}, "error_description": {"The officer declined"}})
+		return c.redirectBack(a, url.Values{"error": {"access_denied"}})
 	}
 	code := auth.RandomToken(32)
 	err = c.S.db.Write(c.Context(), func(w *store.Queries) error {
@@ -463,6 +515,9 @@ func (c *Ctx) oauthToken() error {
 	now := c.S.nowMs()
 	tokens, accessHash, refreshHash := c.S.newTokenPair()
 	accessExp, refreshExp := c.S.now().Add(oauthAccessTTL).UnixMilli(), c.S.now().Add(oauthRefreshTTL).UnixMilli()
+	if !c.resourceOK(f.Get("resource")) {
+		return c.oauthError(400, "invalid_target", "The resource parameter must name this dashboard's /mcp endpoint")
+	}
 	switch f.Get("grant_type") {
 	case "authorization_code":
 		// Take the code in its own transaction, so a failed attempt still burns it: a code
@@ -489,6 +544,10 @@ func (c *Ctx) oauthToken() error {
 				if err != nil || !u.Active {
 					return errGrant
 				}
+				// Reconnecting the same client replaces its old grant instead of piling up rows.
+				if err := w.RevokeClientGrants(ctx, u.ID, code.ClientID, now); err != nil {
+					return err
+				}
 				g := store.OAuthGrant{ID: auth.UUID(), ClientID: code.ClientID, UserID: u.ID, AccessHash: accessHash, AccessExpiresAt: accessExp, RefreshHash: refreshHash, RefreshExpiresAt: refreshExp, CreatedAt: now}
 				if err := w.InsertOAuthGrant(ctx, g); err != nil {
 					return err
@@ -509,15 +568,23 @@ func (c *Ctx) oauthToken() error {
 		}
 		return c.writeTokens(tokens)
 	case "refresh_token":
+		var reused *store.OAuthGrant
 		err := c.S.db.Write(ctx, func(w *store.Queries) error {
-			g, err := w.GrantByRefreshHash(ctx, auth.SHA256Hex(f.Get("refresh_token")))
-			if err != nil {
-				if errors.Is(err, store.ErrNotFound) {
-					return errGrant
+			hash := auth.SHA256Hex(f.Get("refresh_token"))
+			g, err := w.GrantByRefreshHash(ctx, hash)
+			if errors.Is(err, store.ErrNotFound) {
+				// A refresh token that was already rotated away is being replayed: someone
+				// else holds a copy. Disconnect the agent (RFC 9700 §4.14.2).
+				if old, err := w.GrantByPrevRefreshHash(ctx, hash); err == nil && old.RevokedAt == nil {
+					reused = old
 				}
+				return errGrant
+			}
+			if err != nil {
 				return err
 			}
-			if g.RevokedAt != nil || g.RefreshExpiresAt <= now || g.ClientID != f.Get("client_id") {
+			// client_id is optional here (the refresh token is bound to its client), but it must match when sent.
+			if cid := f.Get("client_id"); g.RevokedAt != nil || g.RefreshExpiresAt <= now || (cid != "" && cid != g.ClientID) {
 				return errGrant
 			}
 			u, err := w.UserByID(ctx, g.UserID)
@@ -526,6 +593,17 @@ func (c *Ctx) oauthToken() error {
 			}
 			return w.RotateGrant(ctx, g.ID, accessHash, accessExp, refreshHash, refreshExp)
 		})
+		if reused != nil {
+			// Revoke in its own transaction: the one above rolled back with errGrant.
+			g := reused
+			_ = c.S.db.Write(ctx, func(w *store.Queries) error {
+				if err := w.RevokeGrant(ctx, g.ID, now); err != nil {
+					return err
+				}
+				return w.InsertAudit(ctx, store.AuditEntry{ID: auth.UUID(), ActorUserID: &g.UserID, ActorAgent: &g.ID, Action: "agent.revoked_token_reuse", EntityType: "agent", EntityID: &g.ID,
+					AfterJSON: snapshot(map[string]any{"client": g.ClientName, "revoked": true}), CreatedAt: store.Ms(now)})
+			})
+		}
 		if errors.Is(err, errGrant) {
 			return c.oauthError(400, "invalid_grant", "The refresh token is invalid, expired or revoked; connect the app again")
 		}

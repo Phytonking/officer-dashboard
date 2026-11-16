@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"officerdashboard/internal/auth"
+	"officerdashboard/internal/store"
 )
 
 const testRedirect = "http://127.0.0.1:33418/callback"
@@ -198,7 +200,7 @@ func TestOAuthAuthorizeFlowAndConsent(t *testing.T) {
 	noPKCE := authorizeForm(clientID, "", "")
 	noPKCE.Del("code_challenge")
 	r = e.get("/oauth/authorize?"+noPKCE.Encode(), e.officer())
-	if loc, _ := url.Parse(r.Header.Get("Location")); r.Status != 302 || loc.Query().Get("error") != "invalid_request" {
+	if r.Status != 400 || r.Header.Get("Location") != "" || !strings.Contains(string(r.Raw), "S256") {
 		t.Fatalf("no PKCE: %d %q", r.Status, r.Header.Get("Location"))
 	}
 	// Cancel tells the client access_denied.
@@ -256,7 +258,7 @@ func TestOAuthTokenExchangeAndRefresh(t *testing.T) {
 		return e.do("POST", "/oauth/token", url.Values{"grant_type": {"refresh_token"}, "refresh_token": {rt}, "client_id": {clientID}}, loopback(anon))
 	}
 	next := e.mustOK(ref(refresh))
-	expectStatus(t, "rotated refresh", ref(refresh), 400)
+	// (Replaying the rotated refresh token revokes the grant: TestOAuthRefreshReuseRevokes.)
 	expectStatus(t, "rotated access", e.do("POST", "/mcp", map[string]any{"jsonrpc": "2.0", "id": 1, "method": "ping"}, bearer(access)), 401)
 	access = next.str("access_token")
 	if r := mcpRPC(e, access, "ping", nil); r.Status != 200 {
@@ -436,5 +438,233 @@ func TestMCPToolsMatchRoutes(t *testing.T) {
 		if err := json.Unmarshal(tool.InputSchema, &schema); err != nil || schema["type"] != "object" {
 			t.Errorf("%s: input schema must be an object: %v", tool.Name, err)
 		}
+	}
+}
+
+// Arguments outside the schema are refused, not dropped: an update with its fields next to
+// `body` (instead of inside it) must not report success while changing nothing.
+func TestMCPArgumentChecks(t *testing.T) {
+	e := newEnv(t)
+	_, tok := connectAgent(t, e, "user-priya", "Claude Code")
+	at := tok.str("access_token")
+	text, isErr := toolCall(e, at, "update_event", map[string]any{"id": "event-hack-night", "location": "Moved"})
+	if !isErr || !strings.Contains(text, "Unknown: location") || !strings.Contains(text, "inside `body`") {
+		t.Fatalf("top-level field: %v %s", isErr, text)
+	}
+	if text, isErr = toolCall(e, at, "update_event", map[string]any{"id": "event-hack-night"}); !isErr || !strings.Contains(text, "Missing: body") {
+		t.Fatalf("missing body: %v %s", isErr, text)
+	}
+	if text, isErr = toolCall(e, at, "update_event", map[string]any{"id": "event-hack-night", "body": nil}); !isErr || !strings.Contains(text, "Missing: body") {
+		t.Fatalf("null body: %v %s", isErr, text)
+	}
+	if text, isErr = toolCall(e, at, "calendar_feed", map[string]any{"start": "2026-11-01"}); !isErr || !strings.Contains(text, "Missing: end") {
+		t.Fatalf("missing query arg: %v %s", isErr, text)
+	}
+	if text, isErr = toolCall(e, at, "update_event", map[string]any{"id": "event-hack-night", "body": map[string]any{"location": "Moved"}}); isErr || !strings.Contains(text, `"location":"Moved"`) {
+		t.Fatalf("proper update: %s", text)
+	}
+	// Optional arguments may be left out.
+	if _, isErr = toolCall(e, at, "list_events", map[string]any{}); isErr {
+		t.Fatal("list_events without arguments")
+	}
+	// Files over the limit are refused with their size, before reaching the handler.
+	big := base64.StdEncoding.EncodeToString(make([]byte, 10*1024*1024+1))
+	if text, isErr = toolCall(e, at, "attach_receipt", map[string]any{"id": "req-0005", "filename": "x.pdf", "mimeType": "application/pdf", "contentBase64": big}); !isErr || !strings.Contains(text, "maximum is 10 MB") {
+		t.Fatalf("big file: %s", text)
+	}
+	if text, isErr = toolCall(e, at, "attach_receipt", map[string]any{"id": "req-0005", "filename": "x.pdf", "mimeType": "application/pdf", "contentBase64": ""}); !isErr {
+		t.Fatalf("empty file: %s", text)
+	}
+	if text, isErr = toolCall(e, at, "finance_report", map[string]any{"report": "trial-balance"}); !isErr || !strings.Contains(text, "director") {
+		t.Fatalf("officer trial balance: %s", text)
+	}
+	if text, isErr = toolCall(e, at, "finance_report", map[string]any{"report": "fund-balances"}); isErr {
+		t.Fatalf("officer fund balances: %s", text)
+	}
+}
+
+func TestMCPTransportDetails(t *testing.T) {
+	e := newEnv(t)
+	_, tok := connectAgent(t, e, "user-priya", "Claude Code")
+	at := tok.str("access_token")
+	ping := map[string]any{"jsonrpc": "2.0", "id": 1, "method": "ping"}
+	who := bearer(at)
+	who.headers = map[string]string{"Mcp-Protocol-Version": "1999-01-01"}
+	expectStatus(t, "unsupported protocol header", e.do("POST", "/mcp", ping, who), 400)
+	who.headers = map[string]string{"Mcp-Protocol-Version": "2025-06-18"}
+	expectStatus(t, "supported protocol header", e.do("POST", "/mcp", ping, who), 200)
+	expectStatus(t, "trailing slash", e.do("POST", "/mcp/", ping, bearer(at)), 200)
+	expectStatus(t, "no subpaths", e.do("POST", "/mcp/x", ping, bearer(at)), 404)
+	if r := e.do("POST", "/mcp", "{nope", bearer(at)); r.Status != 400 || r.at("error", "code").(float64) != -32700 {
+		t.Fatalf("parse error: %d %s", r.Status, r.Raw)
+	}
+	r := e.do("POST", "/mcp", []any{ping, map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"}, map[string]any{"jsonrpc": "2.0", "id": "s", "method": "ping"}}, bearer(at))
+	var batch []map[string]any
+	if err := json.Unmarshal(r.Raw, &batch); err != nil || len(batch) != 2 || batch[1]["id"] != "s" {
+		t.Fatalf("batch: %d %s", r.Status, r.Raw)
+	}
+	expectStatus(t, "only notifications", e.do("POST", "/mcp", []any{map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"}}, bearer(at)), 202)
+	if r := mcpRPC(e, at, "initialize", map[string]any{"protocolVersion": "2030-01-01"}); r.Result["protocolVersion"] != mcpLatestProto {
+		t.Fatalf("unknown version negotiation: %s", r.Raw)
+	}
+}
+
+func TestOAuthHardening(t *testing.T) {
+	e := newEnv(t)
+	// Client names cannot smuggle invisible or reordering characters onto the consent page.
+	if got := cleanClientName("Claude‮ edoC\u0000\n  Code​"); got != "Claude edoC Code" {
+		t.Fatalf("cleanClientName: %q", got)
+	}
+	if got := cleanClientName(strings.Repeat("é", 200)); len([]rune(got)) != 80 {
+		t.Fatalf("long name: %d", len([]rune(got)))
+	}
+	if got := cleanClientName(" ‮ "); got != "MCP client" {
+		t.Fatalf("empty name: %q", got)
+	}
+	clientID := registerClient(t, e, "Claude Code")
+	verifier, challenge := pkcePair()
+	// Invalid requests get an error page, never a redirect to the (self-registered) client.
+	errorPage := func(q url.Values) string {
+		r := e.get("/oauth/authorize?"+q.Encode(), e.officer())
+		if r.Status != 400 || r.Header.Get("Location") != "" {
+			t.Fatalf("expected error page: %d %q", r.Status, r.Header.Get("Location"))
+		}
+		return string(r.Raw)
+	}
+	q := authorizeForm(clientID, challenge, "")
+	q.Del("decision")
+	q.Set("resource", "https://other.example/mcp")
+	if got := errorPage(q); !strings.Contains(got, "resource parameter") {
+		t.Fatalf("foreign resource: %s", got)
+	}
+	q.Set("resource", "http://localhost:8090/mcp")
+	expectStatus(t, "own resource", e.get("/oauth/authorize?"+q.Encode(), e.officer()), 200)
+	q.Del("resource")
+	q.Set("state", strings.Repeat("s", 1025))
+	errorPage(q)
+	q.Set("state", "ok")
+	q.Set("code_challenge_method", "plain")
+	if got := errorPage(q); !strings.Contains(got, "S256") {
+		t.Fatalf("plain PKCE: %s", got)
+	}
+
+	// Refresh: client_id may be omitted, must match when sent; a foreign resource is refused.
+	allow := e.do("POST", "/oauth/authorize", authorizeForm(clientID, challenge, "allow"), loopback(e.officer()))
+	loc, _ := url.Parse(allow.Header.Get("Location"))
+	tok := e.mustOK(e.do("POST", "/oauth/token", url.Values{"grant_type": {"authorization_code"}, "code": {loc.Query().Get("code")}, "code_verifier": {verifier}, "client_id": {clientID}, "resource": {"http://localhost:8090/mcp"}}, loopback(anon)))
+	expectStatus(t, "refresh foreign resource", e.do("POST", "/oauth/token", url.Values{"grant_type": {"refresh_token"}, "refresh_token": {tok.str("refresh_token")}, "resource": {"https://other.example"}}, loopback(anon)), 400)
+	expectStatus(t, "refresh other client", e.do("POST", "/oauth/token", url.Values{"grant_type": {"refresh_token"}, "refresh_token": {tok.str("refresh_token")}, "client_id": {"mcp_other"}}, loopback(anon)), 400)
+	e.mustOK(e.do("POST", "/oauth/token", url.Values{"grant_type": {"refresh_token"}, "refresh_token": {tok.str("refresh_token")}}, loopback(anon)))
+}
+
+// Connecting the same client again replaces its grant; expired grants drop off the list.
+func TestConnectedAgentsListStaysClean(t *testing.T) {
+	e := newEnv(t)
+	clientID := registerClient(t, e, "Claude Code")
+	connect := func() reply {
+		verifier, challenge := pkcePair()
+		r := e.do("POST", "/oauth/authorize", authorizeForm(clientID, challenge, "allow"), loopback(e.officer()))
+		loc, _ := url.Parse(r.Header.Get("Location"))
+		return e.mustOK(e.do("POST", "/oauth/token", url.Values{"grant_type": {"authorization_code"}, "code": {loc.Query().Get("code")}, "code_verifier": {verifier}, "client_id": {clientID}}, loopback(anon)))
+	}
+	first, second := connect(), connect()
+	if n := len(e.mustOK(e.get("/api/me/agents", e.officer())).list("agents")); n != 1 {
+		t.Fatalf("reconnect left %d rows", n)
+	}
+	expectStatus(t, "replaced grant", e.do("POST", "/mcp", map[string]any{"jsonrpc": "2.0", "id": 1, "method": "ping"}, bearer(first.str("access_token"))), 401)
+	if r := mcpRPC(e, second.str("access_token"), "ping", nil); r.Status != 200 {
+		t.Fatalf("new grant: %d", r.Status)
+	}
+	e.clock = e.clock.Add(oauthRefreshTTL + time.Hour)
+	if n := len(e.mustOK(e.get("/api/me/agents", e.as("user-priya"))).list("agents")); n != 0 {
+		t.Fatalf("expired grant still listed: %d", n)
+	}
+}
+
+func TestPurgeOAuth(t *testing.T) {
+	e := newEnv(t)
+	used := registerClient(t, e, "used")
+	connectAgent(t, e, "user-priya", "kept")
+	_ = used
+	registerClient(t, e, "abandoned")
+	var before int
+	_ = e.db.R.QueryRow(`SELECT count(*) FROM oauth_clients`).Scan(&before)
+	var n int64
+	err := e.db.Write(context.Background(), func(w *store.Queries) error {
+		var err error
+		n, err = w.PurgeOAuth(context.Background(), e.clock.Add(8*24*time.Hour).UnixMilli())
+		return err
+	})
+	var after int
+	_ = e.db.R.QueryRow(`SELECT count(*) FROM oauth_clients`).Scan(&after)
+	// "used" never got a grant either (only registered), so two of three go; "kept" has a grant.
+	if err != nil || n != 2 || after != before-2 {
+		t.Fatalf("purge: n=%d before=%d after=%d err=%v", n, before, after, err)
+	}
+}
+
+// Findings of the security review, each pinned by a test.
+func TestMCPReviewFixes(t *testing.T) {
+	e := newEnv(t, func(c *Config) { c.UploadRateLimit = 2 })
+	// No open redirect: a signed-out visitor with a bad request to a client registered by
+	// anyone gets a page from the dashboard, not a 302 to the client's URI.
+	evil := registerClient(t, e, "x", "https://evil.example/landing")
+	for _, q := range []string{"response_type=token", "response_type=code&code_challenge=short&code_challenge_method=S256"} {
+		r := e.get("/oauth/authorize?client_id="+evil+"&"+q, anon)
+		if r.Header.Get("Location") != "" || r.Status != 400 {
+			t.Fatalf("open redirect for %s: %d %q", q, r.Status, r.Header.Get("Location"))
+		}
+	}
+
+	_, tok := connectAgent(t, e, "user-director", "Claude Code")
+	at := tok.str("access_token")
+	// Batches are capped.
+	var batch []any
+	for i := 0; i < mcpMaxBatch+1; i++ {
+		batch = append(batch, map[string]any{"jsonrpc": "2.0", "id": i, "method": "ping"})
+	}
+	expectStatus(t, "oversized batch", e.do("POST", "/mcp", batch, bearer(at)), 400)
+	expectStatus(t, "max batch", e.do("POST", "/mcp", batch[:mcpMaxBatch], bearer(at)), 200)
+
+	// Uploads through tools draw on the per-IP upload budget (bearer() comes from 192.0.2.1).
+	csv := "name,email,approval_status,checked_in_at\nAda,ada@example.org,approved,\n"
+	var limited bool
+	for i := 0; i < 4; i++ {
+		text, isErr := toolCall(e, at, "import_event_csv", map[string]any{"kind": "luma_guests", "eventId": "event-hack-night", "dryRun": "true", "content": csv})
+		limited = limited || (isErr && strings.Contains(text, "Rate limited"))
+	}
+	if !limited {
+		t.Fatal("tool uploads bypass the upload rate limit")
+	}
+
+	// Redirects are errors, and dot ids never reach the router.
+	for _, id := range []string{".", ".."} {
+		if text, isErr := toolCall(e, at, "get_event", map[string]any{"id": id}); !isErr || !strings.Contains(text, "Invalid id") {
+			t.Fatalf("id %q: %v %s", id, isErr, text)
+		}
+	}
+
+	// Invites hand out sign-up links, a credential: no invite tools at all.
+	for _, tool := range mcpTools {
+		if strings.Contains(tool.Path, "/invites") {
+			t.Fatalf("%s exposes invites", tool.Name)
+		}
+	}
+}
+
+// A rotated-away refresh token presented again means a leaked copy: the grant is revoked.
+func TestOAuthRefreshReuseRevokes(t *testing.T) {
+	e := newEnv(t)
+	cid, tok := connectAgent(t, e, "user-priya", "Claude Code")
+	refresh := func(rt string) reply {
+		return e.do("POST", "/oauth/token", url.Values{"grant_type": {"refresh_token"}, "refresh_token": {rt}, "client_id": {cid}}, loopback(anon))
+	}
+	next := e.mustOK(refresh(tok.str("refresh_token")))
+	expectStatus(t, "replayed old refresh", refresh(tok.str("refresh_token")), 400)
+	expectStatus(t, "current refresh after replay", refresh(next.str("refresh_token")), 400)
+	expectStatus(t, "access after replay", e.do("POST", "/mcp", map[string]any{"jsonrpc": "2.0", "id": 1, "method": "ping"}, bearer(next.str("access_token"))), 401)
+	var action string
+	if err := e.db.R.QueryRow(`SELECT action FROM audit_log WHERE action = 'agent.revoked_token_reuse'`).Scan(&action); err != nil {
+		t.Fatalf("reuse not audited: %v", err)
 	}
 }

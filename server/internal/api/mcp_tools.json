@@ -639,7 +639,7 @@
                 ]
               }
             },
-            "description": "The JSON request body."
+            "description": "The fields to change (only these are updated)."
           }
         },
         "required": [
@@ -1356,7 +1356,7 @@
                 ]
               }
             },
-            "description": "The JSON request body."
+            "description": "The fields to change (only these are updated)."
           }
         },
         "required": [
@@ -1791,7 +1791,7 @@
     {
       "name": "finance_report",
       "title": "Finance report",
-      "description": "A financial report: trial-balance, activities, financial-position, functional-expenses, budget-vs-actual, fund-balances or form-990.",
+      "description": "A financial report by name. Officers may read budget-vs-actual and fund-balances; the others need the director role.",
       "endpoint": "financeReport",
       "method": "GET",
       "path": "/api/finance/reports/:report",
@@ -1817,7 +1817,16 @@
         "properties": {
           "report": {
             "type": "string",
-            "description": "The report id (from a list_* or search result)."
+            "enum": [
+              "trial-balance",
+              "statement-of-activities",
+              "statement-of-financial-position",
+              "statement-of-functional-expenses",
+              "budget-vs-actual",
+              "fund-balances",
+              "form-990"
+            ],
+            "description": "The report name."
           },
           "fiscalYear": {
             "type": "integer",
@@ -2398,7 +2407,7 @@
                 ]
               }
             },
-            "description": "The JSON request body."
+            "description": "The fields to change (only these are updated)."
           }
         },
         "required": [
@@ -2999,7 +3008,7 @@
                 }
               }
             },
-            "description": "The JSON request body."
+            "description": "The fields to change (only these are updated)."
           }
         },
         "required": [
@@ -3353,7 +3362,7 @@
               "auditNote"
             ],
             "additionalProperties": false,
-            "description": "The JSON request body."
+            "description": "The fields to change (only these are updated)."
           }
         },
         "required": [
@@ -3577,184 +3586,12 @@
                 ]
               }
             },
-            "description": "The JSON request body."
+            "description": "The fields to change (only these are updated)."
           }
         },
         "required": [
           "id",
           "body"
-        ],
-        "additionalProperties": false
-      }
-    },
-    {
-      "name": "list_invites",
-      "title": "List invites",
-      "description": "Pending and past officer invites (director+). Requires the director role.",
-      "endpoint": "invitesList",
-      "method": "GET",
-      "path": "/api/invites",
-      "minRole": "director",
-      "queryKeys": [],
-      "fieldKeys": [],
-      "multipart": "",
-      "response": "json",
-      "annotations": {
-        "title": "List invites",
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false
-      },
-      "inputSchema": {
-        "type": "object",
-        "properties": {},
-        "required": [],
-        "additionalProperties": false
-      }
-    },
-    {
-      "name": "create_invite",
-      "title": "Invite officer",
-      "description": "Invite a new officer by Discord id (director+); sends a Discord DM when the bot is configured. Requires the director role.",
-      "endpoint": "inviteCreate",
-      "method": "POST",
-      "path": "/api/invites",
-      "minRole": "director",
-      "queryKeys": [],
-      "fieldKeys": [],
-      "multipart": "",
-      "response": "json",
-      "annotations": {
-        "title": "Invite officer",
-        "readOnlyHint": false,
-        "destructiveHint": false,
-        "idempotentHint": false,
-        "openWorldHint": false
-      },
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "body": {
-            "type": "object",
-            "properties": {
-              "name": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 100
-              },
-              "discordId": {
-                "type": "string",
-                "pattern": "^\\d{17,20}$"
-              },
-              "subteamId": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 64
-              },
-              "method": {
-                "default": "link",
-                "type": "string",
-                "enum": [
-                  "dm",
-                  "link",
-                  "both"
-                ]
-              }
-            },
-            "required": [
-              "name",
-              "discordId",
-              "subteamId"
-            ],
-            "description": "The JSON request body."
-          }
-        },
-        "required": [
-          "body"
-        ],
-        "additionalProperties": false
-      }
-    },
-    {
-      "name": "update_invite",
-      "title": "Update invite",
-      "description": "Fix a not-yet-accepted invite's name or subteam (director+). Requires the director role.",
-      "endpoint": "inviteUpdate",
-      "method": "PATCH",
-      "path": "/api/invites/:id",
-      "minRole": "director",
-      "queryKeys": [],
-      "fieldKeys": [],
-      "multipart": "",
-      "response": "json",
-      "annotations": {
-        "title": "Update invite",
-        "readOnlyHint": false,
-        "destructiveHint": false,
-        "idempotentHint": false,
-        "openWorldHint": false
-      },
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string",
-            "description": "The record id (from a list_* or search result)."
-          },
-          "body": {
-            "type": "object",
-            "properties": {
-              "name": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 100
-              },
-              "subteamId": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 64
-              }
-            },
-            "description": "The JSON request body."
-          }
-        },
-        "required": [
-          "id",
-          "body"
-        ],
-        "additionalProperties": false
-      }
-    },
-    {
-      "name": "revoke_invite",
-      "title": "Revoke invite",
-      "description": "Revoke a pending invite (director+). Ask the officer to confirm first. Requires the director role.",
-      "endpoint": "inviteRevoke",
-      "method": "DELETE",
-      "path": "/api/invites/:id",
-      "minRole": "director",
-      "queryKeys": [],
-      "fieldKeys": [],
-      "multipart": "",
-      "response": "json",
-      "annotations": {
-        "title": "Revoke invite",
-        "readOnlyHint": false,
-        "destructiveHint": true,
-        "idempotentHint": false,
-        "openWorldHint": false
-      },
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string",
-            "description": "The record id (from a list_* or search result)."
-          }
-        },
-        "required": [
-          "id"
         ],
         "additionalProperties": false
       }
@@ -3963,7 +3800,7 @@
     {
       "name": "log_buildspace_activity",
       "title": "Log Buildspace activity",
-      "description": "Log a Buildspace check-in, update or blocker.",
+      "description": "Log a Buildspace weekly check-in, mentor note, request, purchase or absence. Returns the week's summary, not the new entry's id; read buildspace_overview for ids.",
       "endpoint": "buildspaceActivityCreate",
       "method": "POST",
       "path": "/api/buildspace-launchpad/activity",
@@ -4073,8 +3910,8 @@
     },
     {
       "name": "resolve_buildspace_activity",
-      "title": "Resolve Buildspace activity",
-      "description": "Mark a Buildspace blocker/activity resolved.",
+      "title": "Resolve Buildspace request",
+      "description": "Mark an open Buildspace request (activity kind \"request\") resolved. Find ids in buildspace_overview.",
       "endpoint": "buildspaceActivityResolve",
       "method": "POST",
       "path": "/api/buildspace-launchpad/activity/:id/resolve",
@@ -4084,7 +3921,7 @@
       "multipart": "",
       "response": "json",
       "annotations": {
-        "title": "Resolve Buildspace activity",
+        "title": "Resolve Buildspace request",
         "readOnlyHint": false,
         "destructiveHint": false,
         "idempotentHint": true,

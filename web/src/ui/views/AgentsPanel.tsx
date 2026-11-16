@@ -73,7 +73,7 @@ export function AgentsPanel() {
       ) : agents.data.agents.length === 0 ? (
         <p class="small muted" data-agents-empty>No agents connected yet.</p>
       ) : (
-        <ul class="list" data-agents-list>
+        <ul class="list agents-list" data-agents-list>
           {agents.data.agents.map((a) => (
             <li class="list-row" key={a.id}>
               <span class="list-main">

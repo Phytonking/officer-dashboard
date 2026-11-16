@@ -26,7 +26,8 @@ const out = join(root, 'server/internal/api/mcp_tools.json');
  *
  * Not exposed: sign-in, onboarding and Google Calendar connection (browser flows), file
  * downloads (binary), /api/admin/* (owners, roles, accounts, service tokens: an agent must
- * never manage access or credentials), the service-token APIs (/api/ingest, /api/agent),
+ * never manage access or credentials), officer invites (an invite link is a sign-up
+ * credential), the service-token APIs (/api/ingest, /api/agent),
  * club settings, preferences/widget layout and Cloudflare sync.
  */
 const TOOLS = {
@@ -65,7 +66,7 @@ const TOOLS = {
 
   // ── finance ──
   financeSummary: { name: 'finance_summary', title: 'Finance summary', hint: 'read', description: 'Club finance summary for a fiscal year: balances, spending by budget, pending requests.' },
-  financeReport: { name: 'finance_report', title: 'Finance report', hint: 'read', description: 'A financial report: trial-balance, activities, financial-position, functional-expenses, budget-vs-actual, fund-balances or form-990.' },
+  financeReport: { name: 'finance_report', title: 'Finance report', hint: 'read', description: 'A financial report by name. Officers may read budget-vs-actual and fund-balances; the others need the director role.' },
   budgetsGet: { name: 'get_budgets', title: 'Get budgets', hint: 'read', description: 'Budget lines for a fiscal year.' },
   budgetsPut: { name: 'set_budgets', title: 'Set budgets', hint: 'idempotent', description: 'Replace budget lines for a fiscal year (director+). Confirm with the officer first.' },
   periods: { name: 'list_fiscal_periods', title: 'List fiscal periods', hint: 'read', description: 'Fiscal periods and whether each is closed (director+).' },
@@ -99,22 +100,18 @@ const TOOLS = {
   memberUpdate: { name: 'update_member', title: 'Update member', description: 'Edit a member record (director+).' },
   membersExport: { name: 'export_members_csv', title: 'Export members CSV', hint: 'read', description: 'Members as CSV text, with the same filters as list_members (director+).' },
 
-  // ── officers & invites ──
+  // ── officers ──
   officersList: { name: 'list_officers', title: 'List officers', hint: 'read', description: 'The officer directory: names, roles, titles, subteams, contact details.' },
   officerDetail: { name: 'get_officer', title: 'Get officer', hint: 'read', description: 'One officer profile.' },
   officerActivity: { name: 'get_officer_activity', title: 'Officer activity', hint: 'read', description: "An officer's recent activity across the dashboard." },
   officerUpdate: { name: 'update_officer', title: 'Update officer', description: "Change an officer's title, subteam or start term (director+)." },
-  invitesList: { name: 'list_invites', title: 'List invites', hint: 'read', description: 'Pending and past officer invites (director+).' },
-  inviteCreate: { name: 'create_invite', title: 'Invite officer', description: 'Invite a new officer by Discord id (director+); sends a Discord DM when the bot is configured.' },
-  inviteUpdate: { name: 'update_invite', title: 'Update invite', description: "Fix a not-yet-accepted invite's name or subteam (director+)." },
-  inviteRevoke: { name: 'revoke_invite', title: 'Revoke invite', hint: 'destructive', description: 'Revoke a pending invite (director+). Ask the officer to confirm first.' },
 
   // ── Buildspace Launchpad ──
   buildspaceList: { name: 'buildspace_overview', title: 'Buildspace overview', hint: 'read', description: 'Buildspace Launchpad: projects, people, mentors, activity and weekly schedule.' },
   buildspaceProjectSave: { name: 'save_buildspace_project', title: 'Save Buildspace project', hint: 'idempotent', description: 'Create or update a Buildspace project by id.' },
   buildspacePersonSave: { name: 'save_buildspace_person', title: 'Save Buildspace person', hint: 'idempotent', description: 'Create or update a Buildspace participant by id.' },
-  buildspaceActivityCreate: { name: 'log_buildspace_activity', title: 'Log Buildspace activity', description: 'Log a Buildspace check-in, update or blocker.' },
-  buildspaceActivityResolve: { name: 'resolve_buildspace_activity', title: 'Resolve Buildspace activity', hint: 'idempotent', description: 'Mark a Buildspace blocker/activity resolved.' },
+  buildspaceActivityCreate: { name: 'log_buildspace_activity', title: 'Log Buildspace activity', description: "Log a Buildspace weekly check-in, mentor note, request, purchase or absence. Returns the week's summary, not the new entry's id; read buildspace_overview for ids." },
+  buildspaceActivityResolve: { name: 'resolve_buildspace_activity', title: 'Resolve Buildspace request', hint: 'idempotent', description: 'Mark an open Buildspace request (activity kind "request") resolved. Find ids in buildspace_overview.' },
   buildspaceSchedulePut: { name: 'set_buildspace_schedule', title: 'Set Buildspace schedule', hint: 'idempotent', description: 'Replace the Buildspace weekly schedule (leadership).' },
 
   // ── me ──
@@ -153,7 +150,9 @@ function generate(contracts, z) {
     const required = [];
     const pathParams = [...ep.path.matchAll(/:(\w+)/g)].map((m) => m[1]);
     for (const p of pathParams) {
-      properties[p] = { type: 'string', description: `The ${p === 'id' ? 'record' : p} id (from a list_* or search result).` };
+      properties[p] = p === 'report'
+        ? { type: 'string', enum: [...contracts.FinanceReportName.options], description: 'The report name.' }
+        : { type: 'string', description: `The ${p === 'id' ? 'record' : p} id (from a list_* or search result).` };
       required.push(p);
     }
     let queryKeys = [];
@@ -182,7 +181,7 @@ function generate(contracts, z) {
       }
     } else if (ep.body && typeof ep.body === 'object') {
       const bs = toSchema(ep.body);
-      properties.body = { ...bs, description: 'The JSON request body.' };
+      properties.body = { ...bs, description: ep.method === 'PATCH' ? 'The fields to change (only these are updated).' : 'The JSON request body.' };
       required.push('body');
     }
     const annotations = { title: t.title, readOnlyHint: t.hint === 'read', destructiveHint: t.hint === 'destructive', idempotentHint: t.hint === 'read' || t.hint === 'idempotent', openWorldHint: false };

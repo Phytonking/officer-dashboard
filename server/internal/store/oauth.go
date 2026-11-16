@@ -124,15 +124,22 @@ func (q *Queries) GrantByRefreshHash(ctx context.Context, hash string) (*OAuthGr
 	return g, notFound(err)
 }
 
+// GrantByPrevRefreshHash finds the grant whose previous (already rotated) refresh token
+// this is. ErrNotFound when none.
+func (q *Queries) GrantByPrevRefreshHash(ctx context.Context, hash string) (*OAuthGrant, error) {
+	g, err := scanGrant(q.q.QueryRowContext(ctx, `SELECT `+grantCols+grantFrom+` WHERE g.prev_refresh_hash = ?`, hash))
+	return g, notFound(err)
+}
+
 // GrantByID returns ErrNotFound for an unknown grant.
 func (q *Queries) GrantByID(ctx context.Context, id string) (*OAuthGrant, error) {
 	g, err := scanGrant(q.q.QueryRowContext(ctx, `SELECT `+grantCols+grantFrom+` WHERE g.id = ?`, id))
 	return g, notFound(err)
 }
 
-// UserGrants lists a user's live grants, newest first.
-func (q *Queries) UserGrants(ctx context.Context, userID string) ([]OAuthGrant, error) {
-	rows, err := q.q.QueryContext(ctx, `SELECT `+grantCols+grantFrom+` WHERE g.user_id = ? AND g.revoked_at IS NULL ORDER BY g.created_at DESC, g.rowid DESC`, userID)
+// UserGrants lists a user's live grants (not revoked, refresh token not expired), newest first.
+func (q *Queries) UserGrants(ctx context.Context, userID string, now int64) ([]OAuthGrant, error) {
+	rows, err := q.q.QueryContext(ctx, `SELECT `+grantCols+grantFrom+` WHERE g.user_id = ? AND g.revoked_at IS NULL AND g.refresh_expires_at > ? ORDER BY g.created_at DESC, g.rowid DESC`, userID, now)
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +157,7 @@ func (q *Queries) UserGrants(ctx context.Context, userID string) ([]OAuthGrant, 
 
 // RotateGrant replaces both tokens of a grant (refresh-token rotation).
 func (q *Queries) RotateGrant(ctx context.Context, id, accessHash string, accessExp int64, refreshHash string, refreshExp int64) error {
-	_, err := q.q.ExecContext(ctx, `UPDATE oauth_grants SET access_hash = ?, access_expires_at = ?, refresh_hash = ?, refresh_expires_at = ? WHERE id = ?`,
+	_, err := q.q.ExecContext(ctx, `UPDATE oauth_grants SET prev_refresh_hash = refresh_hash, access_hash = ?, access_expires_at = ?, refresh_hash = ?, refresh_expires_at = ? WHERE id = ?`,
 		accessHash, accessExp, refreshHash, refreshExp, id)
 	return err
 }
@@ -171,6 +178,25 @@ func (q *Queries) RevokeGrant(ctx context.Context, id string, now int64) error {
 func (q *Queries) RevokeUserGrants(ctx context.Context, userID string, now int64) error {
 	_, err := q.q.ExecContext(ctx, `UPDATE oauth_grants SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL`, now, userID)
 	return err
+}
+
+// RevokeClientGrants revokes a user's live grants for one client (it is connecting again).
+func (q *Queries) RevokeClientGrants(ctx context.Context, userID, clientID string, now int64) error {
+	_, err := q.q.ExecContext(ctx, `UPDATE oauth_grants SET revoked_at = ? WHERE user_id = ? AND client_id = ? AND revoked_at IS NULL`, now, userID, clientID)
+	return err
+}
+
+// PurgeOAuth drops expired authorization codes and registered clients that never got a
+// grant within a week (abandoned or spam registrations). Grants stay for the audit trail.
+func (q *Queries) PurgeOAuth(ctx context.Context, now int64) (int64, error) {
+	if _, err := q.q.ExecContext(ctx, `DELETE FROM oauth_codes WHERE expires_at <= ?`, now); err != nil {
+		return 0, err
+	}
+	res, err := q.q.ExecContext(ctx, `DELETE FROM oauth_clients WHERE created_at < ? AND NOT EXISTS (SELECT 1 FROM oauth_grants g WHERE g.client_id = oauth_clients.id) AND NOT EXISTS (SELECT 1 FROM oauth_codes c WHERE c.client_id = oauth_clients.id)`, now-7*24*60*60*1000)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // AgentNames maps grant ids to their client names, for the audit log.

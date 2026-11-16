@@ -46,25 +46,39 @@ agent ── POST /mcp  Authorization: Bearer … ─▶ tools
 - **Storage.** Only SHA-256 hashes of codes and tokens are stored (`oauth_clients`,
   `oauth_codes`, `oauth_grants`). Codes are single use (burned even by a failed attempt) and
   live 2 minutes.
+- **Refresh-token reuse.** Presenting a refresh token that was already rotated away means a
+  copy leaked: the grant is revoked at once and `agent.revoked_token_reuse` is audited
+  (RFC 9700). Reconnecting the same client replaces its previous grant.
+- **No open redirect.** Any visitor can register a client, so an invalid authorize request
+  (bad `response_type`, missing PKCE, foreign `resource`, overlong `state`) shows an error
+  page instead of redirecting. Only the officer's own Allow or Cancel goes back to the client.
+- **Arguments are checked.** Unknown or missing arguments are refused with the list of valid
+  ones, so request fields put next to `body` instead of inside it can never "succeed" as a
+  no-op. Ids `.`/`..` and API redirects are errors.
 - **Redirect URIs.** https, http on a loopback host (any port, RFC 8252), or an app scheme
   such as `cursor://`. Never `javascript:`, `data:` or `file:`. A request with an
   unregistered redirect URI gets an error page, never a redirect.
 - **Transport.** Streamable HTTP, stateless: each POST carries a JSON-RPC message or batch
-  and gets a JSON reply. No SSE stream, no sessions (`GET /mcp` is 405). CORS is open on the
+  (at most 20 messages) and gets a JSON reply. An unsupported `MCP-Protocol-Version` header is
+  a 400. `/mcp/` works too. No SSE stream, no sessions (`GET /mcp` is 405). CORS is open on the
   bearer-only endpoints (no cookies are accepted there).
-- **Rate limits.** POSTs to `/oauth/*` share the sign-in budget per IP.
+- **Rate limits.** POSTs to `/oauth/*` share the sign-in budget per IP; upload and import
+  tools draw on the same per-IP upload budget as the API routes.
+- **Housekeeping.** The hourly janitor drops expired codes and clients that never got a grant
+  within a week.
 
 ## Tools
 
-About 70 tools, one per API endpoint: context (`whoami`, `search`, `lookups`,
+67 tools, one per API endpoint: context (`whoami`, `search`, `lookups`,
 `calendar_feed`…), events, purchase requests (including `attach_receipt` with base64
-files), finance reports and budgets, the design board, external contacts, members,
-officers and invites, Buildspace Launchpad and the officer's own profile. Deletes and
+files, 10 MB max), finance reports and budgets, the design board, external contacts, members,
+officers, Buildspace Launchpad and the officer's own profile. Deletes and
 period closes are marked `destructiveHint` so clients ask before running them.
 
 Not exposed: sign-in and onboarding, Google Calendar connection, file downloads,
 `/api/admin/*` (owners, roles, accounts, service tokens: an agent never manages access
-or credentials), the service-token APIs and Cloudflare sync.
+or credentials), officer invites (an invite link is a sign-up credential), the
+service-token APIs and Cloudflare sync.
 
 Tool names, descriptions and the endpoint list live in `scripts/gen-mcp-tools.mjs`; the
 input schemas come from `src/core/contracts.ts`. After changing either, regenerate:

@@ -27,6 +27,8 @@ CREATE TABLE `oauth_grants` (
 	`access_expires_at` integer NOT NULL,
 	`refresh_hash` text NOT NULL,
 	`refresh_expires_at` integer NOT NULL,
+	-- The refresh token this one replaced: presenting it again means it leaked (RFC 9700).
+	`prev_refresh_hash` text,
 	`created_at` integer NOT NULL,
 	`last_used_at` integer,
 	`revoked_at` integer,
@@ -37,6 +39,8 @@ CREATE TABLE `oauth_grants` (
 CREATE UNIQUE INDEX `oauth_grants_access` ON `oauth_grants` (`access_hash`);
 --> statement-breakpoint
 CREATE UNIQUE INDEX `oauth_grants_refresh` ON `oauth_grants` (`refresh_hash`);
+--> statement-breakpoint
+CREATE INDEX `oauth_grants_prev_refresh` ON `oauth_grants` (`prev_refresh_hash`);
 --> statement-breakpoint
 CREATE INDEX `oauth_grants_user` ON `oauth_grants` (`user_id`);
 --> statement-breakpoint

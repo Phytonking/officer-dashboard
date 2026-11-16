@@ -15,6 +15,7 @@ const ENTITY_TYPES: [string, string][] = [
   ['service_token', 'tokens'],
   ['budget', 'budgets'],
   ['fiscal_period', 'fiscal periods'],
+  ['agent', 'AI agents'],
 ];
 
 /**

@@ -21,7 +21,7 @@ func (c *Ctx) agentsList() error {
 	if err != nil {
 		return err
 	}
-	gs, err := c.S.db.Read().UserGrants(c.Context(), u.ID)
+	gs, err := c.S.db.Read().UserGrants(c.Context(), u.ID, c.S.nowMs())
 	if err != nil {
 		return err
 	}
