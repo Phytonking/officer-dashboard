@@ -594,6 +594,8 @@ export type PurchaseSettlement = z.infer<typeof PurchaseSettlement>;
  * PurchaseSettlement; the others take an optional comment.
  */
 export const PurchaseTransitionRequest = z.discriminatedUnion('to', [
+  // Back from being bought (purchase fell through or a stale agent claim); not a decision.
+  z.object({ to: z.literal('approved'), comment: TransitionComment }),
   z.object({ to: z.literal('fulfilling'), comment: TransitionComment }),
   PurchaseSettlement.extend({ to: z.literal('fulfilled') }),
   PurchaseSettlement.extend({ to: z.literal('reimbursed') }),

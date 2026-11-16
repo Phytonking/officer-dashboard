@@ -833,7 +833,7 @@ function OfficerDrawer({
                       onClick={() =>
                         confirm({
                           title: 'Change role',
-                          body: `${o.name}: ${cap(o.role)} → ${cap(role)}. They are signed out everywhere and sign in again with the new access.`,
+                          body: `${o.name}: ${cap(o.role)} → ${cap(role)}. They stay signed in; their open pages switch to the new access on their next action.`,
                           go: 'Change role',
                           run: async () => {
                             await api('adminUserUpdate', { params: { id: o.id }, body: { role: role as Officer['role'] } });

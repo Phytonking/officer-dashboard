@@ -211,6 +211,17 @@ func (c *Ctx) officerUpdate() error {
 			}
 		}
 		patch := store.ProfilePatch{SubteamID: optOf(subteam)}
+		// Until setup is finished the invite holds the subteam (each setup save copies it back),
+		// so a director's move goes on the invite too or the next save would undo it.
+		if subteam.Set {
+			if inv, err := q.InviteForUser(ctx, before.ID); err == nil && inv.OnboardedAt == nil && inv.SubteamID != subteam.V {
+				if err := q.UpdateInviteDetails(ctx, inv.ID, inv.Name, subteam.V); err != nil {
+					return err
+				}
+			} else if err != nil && !errors.Is(err, store.ErrNotFound) {
+				return err
+			}
+		}
 		if before.ProfileComplete {
 			patch.Title = optOf(title)
 		}

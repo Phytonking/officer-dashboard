@@ -84,6 +84,17 @@ func (c *Ctx) clubSettingsPut() error {
 	return nil
 }
 
+// clubZone is the club's time zone (Settings), for anything shared across officers.
+func (s *Server) clubZone(ctx context.Context) *time.Location {
+	if cs, err := s.db.Read().ClubSettings(ctx); err == nil {
+		if zone, err := time.LoadLocation(cs.ClubTimezone); err == nil {
+			return zone
+		}
+	}
+	zone, _ := time.LoadLocation(store.DefaultTimezone)
+	return zone
+}
+
 // Delivery and shared drafts use the same persisted zone as the dashboard.
 func (s *Server) effectiveZone(ctx context.Context, userID string) *time.Location {
 	zone, err := s.db.Read().EffectiveTimezone(ctx, userID)

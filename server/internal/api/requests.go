@@ -594,7 +594,8 @@ type settlement struct {
 
 func readSettlement(r *validate.Reader) settlement {
 	s := settlement{}
-	s.ActualCents = r.Int("actualTotalCents", validate.I{Req: true, Min: validate.Lo(0)}).V
+	// Ledger amounts must stay safe integers once summed; no single purchase comes near $1B.
+	s.ActualCents = r.Int("actualTotalCents", validate.I{Req: true, Min: validate.Lo(0), Max: validate.Lo(100_000_000_000)}).V
 	s.Attachments = r.Strings("attachmentIds", false, 0, 20, nil, 64)
 	s.OrderRef = r.Str("orderReference", validate.S{Trim: true, Max: 200}).V
 	s.Comment = r.Str("comment", validate.S{Trim: true, Max: 2000}).V
@@ -804,7 +805,7 @@ type transitionInput struct {
 }
 
 func readTransition(r *validate.Reader) transitionInput {
-	to := r.Str("to", validate.S{Req: true, Enum: []string{"fulfilling", "fulfilled", "reimbursed", "closed", "cancelled"}})
+	to := r.Str("to", validate.S{Req: true, Enum: []string{"approved", "fulfilling", "fulfilled", "reimbursed", "closed", "cancelled"}})
 	t := transitionInput{To: to.V}
 	switch to.V {
 	case "fulfilled", "reimbursed":
@@ -879,6 +880,14 @@ func (c *Ctx) lifecycle(action string) error {
 				}
 			}
 		}
+		// Through /transition, "approved" only sends a request being bought back (the purchase
+		// fell through or a claim went stale); a decision on a submitted request is /approve.
+		if action == "transition" && in.To == "approved" && r.Status != "fulfilling" {
+			return fail(409, "invalid_transition", "Approve a submitted request with Approve")
+		}
+		if action == "transition" && in.To == "approved" && r.RequesterID == u.ID {
+			return forbidden("Another director must send your own request back")
+		}
 		if !purchases.CanTransition(r.Type, r.Status, in.To) {
 			return fail(409, "invalid_transition", fmt.Sprintf("Cannot move %s to %s", r.Status, in.To))
 		}
@@ -905,9 +914,9 @@ func (c *Ctx) lifecycle(action string) error {
 				return err
 			}
 		case in.To == "approved" && r.Status == "fulfilling":
-			// Sending a held request back to approved cancels the held job (never re-queued,
-			// so nothing is bought twice).
-			if err := w.MoveJobs(ctx, r.ID, []string{"held"}, "cancelled", now); err != nil {
+			// Sending a request back to approved cancels its held or claimed job (never re-queued,
+			// so nothing is bought twice); a director can buy it by hand from there.
+			if err := w.MoveJobs(ctx, r.ID, []string{"held", "claimed"}, "cancelled", now); err != nil {
 				return err
 			}
 		case in.To == "fulfilled":

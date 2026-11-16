@@ -732,7 +732,8 @@ func (c *Ctx) overview() error {
 	upcoming := 0
 	var checkIn, reflect []*float64
 	for _, e := range all {
-		if !e.at.Before(now) {
+		// Drafts and cancelled events are not on the calendar (as on the Events page).
+		if !e.at.Before(now) && e.item.Status != "draft" && e.item.Status != "cancelled" {
 			upcoming++
 		}
 		if !e.at.Before(from) && !e.at.After(now) {

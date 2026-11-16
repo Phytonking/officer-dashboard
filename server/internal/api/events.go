@@ -268,6 +268,11 @@ func (c *Ctx) eventUpdate() error {
 		if endsAt != nil && endsBeforeStarts(startsAt, *endsAt) {
 			return badRequest("Event ends before it starts")
 		}
+		// Once an event has a host, only that host or a director+ hands it to someone else;
+		// otherwise any officer could make themselves host and then rule out design.
+		if in.HostUserID.Has() && e.HostUserID != nil && in.HostUserID.V != *e.HostUserID && !canSkipDesign(c.User, e.HostUserID) {
+			return forbidden("Only the host or a director can change the host")
+		}
 		// Ruling an event out of design is director+ or the host's call (the host as it was).
 		if in.DesignNeed.V == "not_needed" && e.DesignNeed != "not_needed" && !canSkipDesign(c.User, e.HostUserID) {
 			return forbidden(skipDesignDenied)
@@ -760,7 +765,7 @@ func (c *Ctx) eventsImport() error {
 		case eventID.V != "":
 			existing, qerr = w.EventByID(ctx, eventID.V)
 		case lumaEventID.V != "":
-			existing, qerr = w.EventByLumaID(ctx, lumaEventID.V)
+			existing, qerr = eventForLuma(ctx, w, lumaEventID.V)
 		}
 		if qerr != nil && !errors.Is(qerr, store.ErrNotFound) {
 			return qerr
@@ -915,7 +920,7 @@ func (c *Ctx) ingestLuma() error {
 	ctx := c.Context()
 	var result importResult
 	err = c.S.db.Write(ctx, func(w *store.Queries) error {
-		existing, qerr := w.EventByLumaID(ctx, ev.LumaID.V)
+		existing, qerr := eventForLuma(ctx, w, ev.LumaID.V)
 		if qerr != nil && !errors.Is(qerr, store.ErrNotFound) {
 			return qerr
 		}
@@ -984,4 +989,17 @@ func (c *Ctx) ingestLuma() error {
 	c.S.syncEventID(result.EventID) // unchanged events are skipped per recipient
 	writeJSON(c.W, 200, result)
 	return nil
+}
+
+// eventForLuma finds the event for a Luma event id: by its stored id, or else the event whose
+// linked page is that event's lu.ma/event/<id> URL (an officer pasted it before any import).
+func eventForLuma(ctx context.Context, w *store.Queries, lumaID string) (*store.Event, error) {
+	e, err := w.EventByLumaID(ctx, lumaID)
+	if !errors.Is(err, store.ErrNotFound) {
+		return e, err
+	}
+	if linked, lerr := w.EventByLumaURL(ctx, "https://lu.ma/event/"+lumaID); lerr == nil {
+		return linked, nil
+	}
+	return nil, err
 }

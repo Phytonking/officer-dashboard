@@ -850,12 +850,12 @@ func (c *Ctx) designFileDownload() error {
 // ─── prefill from an event (used by the Events page's "Request design") ───
 
 // designDraftFor proposes a request for an event: due a week before it starts (in
-// the effective time zone), never before today.
+// the club's time zone, since designers and the requester share the brief), never before today.
 func (s *Server) designDraftFor(ctx context.Context, userID string, e *store.Event) DesignRequestDraft {
 	d := DesignRequestDraft{Title: e.Name + " promo", Type: "social", Urgency: "normal", EventID: e.ID, Event: DesignEventRef{ID: e.ID, Name: e.Name, StartsAt: e.StartsAt}}
 	when := ""
 	if t, err := luma.ParseInstant(e.StartsAt); err == nil {
-		zone := s.effectiveZone(ctx, userID)
+		zone := s.clubZone(ctx)
 		p := t.In(zone)
 		when = p.Format("Mon Jan 2, 3:04 PM MST")
 		// A past event gets no due date; otherwise a week ahead, but never before today.

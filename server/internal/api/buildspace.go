@@ -135,6 +135,22 @@ func (c *Ctx) buildspaceProjectSave() error {
 				return badRequest("Select distinct mentor contacts")
 			}
 			seen[id] = true
+			// The mentor list also carries contacts already assigned somewhere (so a retyped
+			// contact still shows), but a new assignment needs a mentor or both contact.
+			kept := false
+			for _, old := range b.Projects {
+				if old.ID == p.ID {
+					for _, m := range old.MentorIDs {
+						kept = kept || m == id
+					}
+				}
+			}
+			if !kept {
+				ct, err := q.ContactByID(c.Context(), id)
+				if err != nil || (ct.Type != "mentor" && ct.Type != "both") {
+					return badRequest("Mentors must be External Contacts of type mentor or both")
+				}
+			}
 		}
 		var before any
 		for _, old := range b.Projects {
@@ -380,6 +396,9 @@ func (c *Ctx) buildspaceActivityResolve() error {
 				}
 				if a.PurchaseID != nil {
 					return badRequest("Resolve linked purchases in Finance")
+				}
+				if a.Status != "open" {
+					return conflict("Only open requests can be resolved")
 				}
 				if err = q.ResolveBuildspaceActivity(c.Context(), a.ID); err != nil {
 					return err

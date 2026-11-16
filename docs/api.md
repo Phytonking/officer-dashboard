@@ -208,6 +208,12 @@ is `{ "results": [] }`. A missing or blank `q`, or a `limit` outside 1–50, is 
   uploaded to the request.
 - **Approve** enqueues a `fulfillment_jobs` row for club purchases and sends a Discord
   notification; submit / deny / fulfilled also notify.
+- **Back to approved.** A director other than the requester can send a request being bought
+  (`fulfilling`) back with `POST /api/requests/:id/transition {"to":"approved"}` (the purchase fell
+  through, or an agent claim went stale). Its held or claimed job is cancelled, never re-queued, so
+  nothing is bought twice. `to: "approved"` on any other status is 409; decisions use `/approve`.
+  The agent's queue (`GET /api/agent/jobs`) lists a queued job only while its request is `approved`.
+  Settlement amounts are capped at $1,000,000,000.00 (`actualTotalCents` ≤ 100000000000).
 - **Design requests.** Every officer sees the whole board (`GET /api/design-requests`) and
   can create a request, comment, and attach reference files. The design team is the active
   users whose officer profile is on the subteam named **Design** (migration 0008 creates it).
@@ -528,6 +534,12 @@ directors and leadership have the same event powers. Each change writes `event.c
 - **Cover.** `PUT /api/events/:id/cover` takes one image (content is checked against its
   type). It is stored in the database; `coverUrl` is `/api/events/:id/cover?v=<ms>` and
   changes when the cover does. The GET answers with `nosniff` and a sandbox CSP.
+- **Host.** New events in the UI preselect their creator as host. Once an event has a host,
+  only that host or a director+ can change `hostUserId` (403 otherwise), so the host's right to
+  mark the event as not needing design can't be taken by another officer.
+- **Luma imports find linked events.** An ingest or CSV import for Luma id `evt-…` updates the
+  event whose linked page is `https://lu.ma/event/evt-…` when no event stores that id yet,
+  instead of creating a second event.
 - **Search.** `q` matches the event name or location.
 - **Delete.** Guests, reflections and the cover go with the event. An event that
   purchase requests point at answers 409 until they are moved. The published Luma event
