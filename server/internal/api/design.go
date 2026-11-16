@@ -28,6 +28,8 @@ type DesignEventRef struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
 	StartsAt string `json:"startsAt"`
+	// Status lets designers see that the event was cancelled (the card stays until someone acts).
+	Status string `json:"status"`
 }
 
 type DesignRequestItem struct {
@@ -157,7 +159,7 @@ func (d *designCtx) item(r *store.DesignRequest, comments, files int) (DesignReq
 	}
 	if r.EventID != nil {
 		if e := d.cat.eventByID[*r.EventID]; e != nil {
-			it.Event = &DesignEventRef{ID: e.ID, Name: e.Name, StartsAt: e.StartsAt}
+			it.Event = &DesignEventRef{ID: e.ID, Name: e.Name, StartsAt: e.StartsAt, Status: e.Status}
 		}
 	}
 	return it, nil
@@ -852,7 +854,7 @@ func (c *Ctx) designFileDownload() error {
 // designDraftFor proposes a request for an event: due a week before it starts (in
 // the club's time zone, since designers and the requester share the brief), never before today.
 func (s *Server) designDraftFor(ctx context.Context, userID string, e *store.Event) DesignRequestDraft {
-	d := DesignRequestDraft{Title: e.Name + " promo", Type: "social", Urgency: "normal", EventID: e.ID, Event: DesignEventRef{ID: e.ID, Name: e.Name, StartsAt: e.StartsAt}}
+	d := DesignRequestDraft{Title: e.Name + " promo", Type: "social", Urgency: "normal", EventID: e.ID, Event: DesignEventRef{ID: e.ID, Name: e.Name, StartsAt: e.StartsAt, Status: e.Status}}
 	when := ""
 	if t, err := luma.ParseInstant(e.StartsAt); err == nil {
 		zone := s.clubZone(ctx)

@@ -127,3 +127,50 @@ func TestBuyingRequestGoesBackToApproved(t *testing.T) {
 	id2 := e.mustOK(e.post("/api/requests", with(purchase, "submit", true), e.officer())).str("request", "id")
 	expectStatus(t, "decision via transition", e.post("/api/requests/"+id2+"/transition", map[string]any{"to": "approved"}, e.director()), 409)
 }
+
+// When a host is deactivated, others can still edit their event (the editor re-sends the
+// stored host), but nobody can newly pick an inactive host.
+func TestEventWithDeactivatedHostStaysEditable(t *testing.T) {
+	e := newEnv(t)
+	id := e.mustOK(e.post("/api/events", map[string]any{"name": "Orphan", "startsAt": "2026-12-04T02:00:00Z", "hostUserId": "user-ava"}, e.officer())).str("event", "id")
+	e.mustOK(e.do("PATCH", "/api/admin/users/user-ava", map[string]any{"active": false}, e.director()))
+	e.mustOK(e.do("PATCH", "/api/events/"+id, map[string]any{"location": "Atrium", "hostUserId": "user-ava"}, e.as("user-marcus")))
+	other := e.mustOK(e.post("/api/events", map[string]any{"name": "Other", "startsAt": "2026-12-05T02:00:00Z"}, e.officer())).str("event", "id")
+	expectStatus(t, "inactive host on another event", e.do("PATCH", "/api/events/"+other, map[string]any{"hostUserId": "user-ava"}, e.director()), 400)
+}
+
+// Clearing the host is a host change: another officer can't null it out and then claim it.
+func TestClearingTheHostNeedsHostOrDirector(t *testing.T) {
+	e := newEnv(t)
+	id := e.mustOK(e.post("/api/events", map[string]any{"name": "Hosted", "startsAt": "2026-12-04T02:00:00Z", "hostUserId": "user-ava"}, e.officer())).str("event", "id")
+	expectStatus(t, "officer clears host", e.do("PATCH", "/api/events/"+id, map[string]any{"hostUserId": nil}, e.as("user-marcus")), 403)
+	e.mustOK(e.do("PATCH", "/api/events/"+id, map[string]any{"hostUserId": nil}, e.as("user-ava")))
+}
+
+// Designers see that a linked event was cancelled, and its deadline leaves the calendar.
+func TestCancelledEventShowsOnDesignCardAndLeavesCalendar(t *testing.T) {
+	e := newEnv(t)
+	id := e.mustOK(e.post("/api/events", map[string]any{"name": "Soon", "startsAt": "2026-11-20T02:00:00Z"}, e.officer())).str("event", "id")
+	req := e.mustOK(e.post("/api/events/"+id+"/design-requests", map[string]any{"dueDate": "2026-11-12"}, e.officer())).str("request", "id")
+	feed := "/api/calendar/feed?start=2026-11-01&end=2026-11-30&sources=design"
+	if !strings.Contains(string(e.mustOK(e.get(feed, e.officer())).Raw), req) {
+		t.Fatal("design deadline missing before cancel")
+	}
+	e.mustOK(e.do("PATCH", "/api/events/"+id, map[string]any{"status": "cancelled"}, e.officer()))
+	if got := e.mustOK(e.get("/api/design-requests/"+req, e.officer())).str("request", "event", "status"); got != "cancelled" {
+		t.Fatalf("card event status %q", got)
+	}
+	if strings.Contains(string(e.mustOK(e.get(feed, e.officer())).Raw), req) {
+		t.Fatal("cancelled event's design deadline still on the calendar")
+	}
+}
+
+// Deleting a contact who mentors in Buildspace says why it can't, instead of a generic conflict.
+func TestDeletingAnAssignedMentorExplainsWhy(t *testing.T) {
+	e := newEnv(t)
+	r := e.do("DELETE", "/api/contacts/bs-mentor-maya", nil, e.officer())
+	expectStatus(t, "assigned mentor", r, 409)
+	if !strings.Contains(r.str("error", "message"), "Buildspace") {
+		t.Fatalf("message %s", r.Raw)
+	}
+}

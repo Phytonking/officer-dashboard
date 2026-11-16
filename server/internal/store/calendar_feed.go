@@ -112,7 +112,8 @@ func loadCalendarEvents(ctx context.Context, q *Queries, window CalendarRange) (
 	return out, rows.Err()
 }
 func loadCalendarDesign(ctx context.Context, q *Queries, window CalendarRange) ([]CalendarItem, error) {
-	rows, err := q.q.QueryContext(ctx, `SELECT id,title,due_date,type FROM design_requests WHERE due_date>=? AND due_date<? AND stage<>'delivered' ORDER BY due_date,id`, window.FirstDate, window.EndDate)
+	rows, err := q.q.QueryContext(ctx, `SELECT id,title,due_date,type FROM design_requests WHERE due_date>=? AND due_date<? AND stage<>'delivered'
+		AND (event_id IS NULL OR event_id NOT IN (SELECT id FROM events WHERE status='cancelled')) ORDER BY due_date,id`, window.FirstDate, window.EndDate)
 	if err != nil {
 		return nil, err
 	}

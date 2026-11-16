@@ -135,7 +135,15 @@ func endsBeforeStarts(starts, ends string) bool {
 // refsOK checks the host user, the host subteam, and that no other event links the Luma page.
 func (c *Ctx) refsOK(ctx context.Context, w *store.Queries, cat *catalog, in eventInput, eventID string) error {
 	if in.HostUserID.Has() {
-		if u := cat.users[in.HostUserID.V]; u == nil || !u.Active {
+		// Re-sending the event's current host is fine even after they were deactivated, so
+		// others can still edit or cancel an event whose host left (the editor always sends it).
+		unchanged := false
+		if eventID != "" {
+			if cur, err := w.EventByID(ctx, eventID); err == nil && cur.HostUserID != nil && *cur.HostUserID == in.HostUserID.V {
+				unchanged = true
+			}
+		}
+		if u := cat.users[in.HostUserID.V]; !unchanged && (u == nil || !u.Active) {
 			return badRequest("Invalid host")
 		}
 	}
@@ -270,7 +278,8 @@ func (c *Ctx) eventUpdate() error {
 		}
 		// Once an event has a host, only that host or a director+ hands it to someone else;
 		// otherwise any officer could make themselves host and then rule out design.
-		if in.HostUserID.Has() && e.HostUserID != nil && in.HostUserID.V != *e.HostUserID && !canSkipDesign(c.User, e.HostUserID) {
+		// Clearing the host (null) counts as a change too.
+		if in.HostUserID.Set && e.HostUserID != nil && (in.HostUserID.Null || in.HostUserID.V != *e.HostUserID) && !canSkipDesign(c.User, e.HostUserID) {
 			return forbidden("Only the host or a director can change the host")
 		}
 		// Ruling an event out of design is director+ or the host's call (the host as it was).

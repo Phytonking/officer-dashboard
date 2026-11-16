@@ -540,6 +540,12 @@ directors and leadership have the same event powers. Each change writes `event.c
 - **Luma imports find linked events.** An ingest or CSV import for Luma id `evt-…` updates the
   event whose linked page is `https://lu.ma/event/evt-…` when no event stores that id yet,
   instead of creating a second event.
+- **Deactivated host.** Re-sending an event's current host is accepted even after that officer
+  was deactivated, so others can still edit or cancel the event; picking an inactive host is 400.
+  Clearing the host (`hostUserId: null`) is a host change (host or director+ only).
+- **Cancelled events and design.** `DesignEventRef.status` carries the linked event's status; the
+  board marks a cancelled event and its design deadline leaves the Home calendar. A card whose due
+  date falls after a (moved) event shows "After the event"; the due date itself is not changed.
 - **Search.** `q` matches the event name or location.
 - **Delete.** Guests, reflections and the cover go with the event. An event that
   purchase requests point at answers 409 until they are moved. The published Luma event

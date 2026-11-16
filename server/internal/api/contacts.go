@@ -218,6 +218,24 @@ func (c *Ctx) contactDelete() error {
 		if err != nil {
 			return err
 		}
+		// Buildspace keeps mentor assignments and check-ins pointing at the contact: say so
+		// instead of failing on the foreign key.
+		b, err := q.Buildspace(ctx)
+		if err != nil {
+			return err
+		}
+		for _, p := range b.Projects {
+			for _, m := range p.MentorIDs {
+				if m == id {
+					return conflict(v.Name + " mentors " + p.Name + " in Buildspace + Launchpad. Remove them from that project first.")
+				}
+			}
+		}
+		for _, a := range b.Activity {
+			if a.MentorID != nil && *a.MentorID == id {
+				return conflict(v.Name + " has mentor check-ins in Buildspace + Launchpad, so the contact can't be deleted.")
+			}
+		}
 		if err := q.DeleteContact(ctx, id); err != nil {
 			return err
 		}

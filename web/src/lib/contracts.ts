@@ -1144,7 +1144,7 @@ export const DesignUrgency = z.enum(['normal', 'high']);
 export const DesignFileKind = z.enum(['reference', 'review', 'delivered']);
 export type DesignFileKind = z.infer<typeof DesignFileKind>;
 
-export const DesignEventRef = z.object({ id: Id, name: z.string(), startsAt: z.string() });
+export const DesignEventRef = z.object({ id: Id, name: z.string(), startsAt: z.string(), status: EventStatus });
 export const DesignRequestItem = z.object({
   id: Id,
   title: z.string(),
