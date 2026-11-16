@@ -1,0 +1,440 @@
+package api
+
+import (
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
+	"net/http"
+	"net/url"
+	"strings"
+	"testing"
+	"time"
+
+	"officerdashboard/internal/auth"
+)
+
+const testRedirect = "http://127.0.0.1:33418/callback"
+
+// loopback keeps the OAuth calls clear of the per-IP sign-in rate limit.
+func loopback(a actor) actor {
+	a.remote = "127.0.0.1:5555"
+	return a
+}
+
+func registerClient(t *testing.T, e *testEnv, name string, uris ...string) string {
+	t.Helper()
+	if len(uris) == 0 {
+		uris = []string{testRedirect}
+	}
+	r := e.do("POST", "/oauth/register", map[string]any{"client_name": name, "redirect_uris": uris}, loopback(anon))
+	if r.Status != 201 || r.str("client_id") == "" {
+		t.Fatalf("register: %d %s", r.Status, r.Raw)
+	}
+	return r.str("client_id")
+}
+
+func pkcePair() (verifier, challenge string) {
+	verifier = auth.RandomToken(32)
+	sum := sha256.Sum256([]byte(verifier))
+	return verifier, base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+func authorizeForm(clientID, challenge, decision string) url.Values {
+	return url.Values{"client_id": {clientID}, "redirect_uri": {testRedirect}, "response_type": {"code"}, "code_challenge": {challenge}, "code_challenge_method": {"S256"}, "state": {"st8"}, "decision": {decision}}
+}
+
+// connectAgent runs the whole OAuth flow as userID and returns the token response.
+func connectAgent(t *testing.T, e *testEnv, userID, clientName string) (clientID string, tokens reply) {
+	t.Helper()
+	clientID = registerClient(t, e, clientName)
+	verifier, challenge := pkcePair()
+	who := loopback(e.as(userID))
+	r := e.do("POST", "/oauth/authorize", authorizeForm(clientID, challenge, "allow"), who)
+	if r.Status != 302 {
+		t.Fatalf("authorize: %d %s", r.Status, r.Raw)
+	}
+	loc, _ := url.Parse(r.Header.Get("Location"))
+	if loc.Query().Get("state") != "st8" || loc.Query().Get("code") == "" || !strings.HasPrefix(loc.String(), testRedirect) {
+		t.Fatalf("authorize redirect: %s", loc)
+	}
+	tokens = e.do("POST", "/oauth/token", url.Values{"grant_type": {"authorization_code"}, "code": {loc.Query().Get("code")}, "code_verifier": {verifier}, "client_id": {clientID}, "redirect_uri": {testRedirect}}, loopback(anon))
+	if tokens.Status != 200 || tokens.str("access_token") == "" || tokens.str("refresh_token") == "" {
+		t.Fatalf("token: %d %s", tokens.Status, tokens.Raw)
+	}
+	return clientID, tokens
+}
+
+type rpcReply struct {
+	Status int
+	Result map[string]any
+	Error  map[string]any
+	Raw    []byte
+}
+
+func mcpRPC(e *testEnv, token, method string, params any) rpcReply {
+	e.t.Helper()
+	body := map[string]any{"jsonrpc": "2.0", "id": 7, "method": method}
+	if params != nil {
+		body["params"] = params
+	}
+	r := e.do("POST", "/mcp", body, bearer(token))
+	out := rpcReply{Status: r.Status, Raw: r.Raw}
+	out.Result, _ = r.Body["result"].(map[string]any)
+	out.Error, _ = r.Body["error"].(map[string]any)
+	return out
+}
+
+// toolCall returns the tool's text and isError flag.
+func toolCall(e *testEnv, token, name string, args map[string]any) (string, bool) {
+	e.t.Helper()
+	r := mcpRPC(e, token, "tools/call", map[string]any{"name": name, "arguments": args})
+	if r.Result == nil {
+		e.t.Fatalf("tools/call %s: %d %s", name, r.Status, r.Raw)
+	}
+	content, _ := r.Result["content"].([]any)
+	text := ""
+	if len(content) > 0 {
+		text, _ = content[0].(map[string]any)["text"].(string)
+	}
+	isErr, _ := r.Result["isError"].(bool)
+	return text, isErr
+}
+
+func toolNames(r rpcReply) map[string]bool {
+	out := map[string]bool{}
+	tools, _ := r.Result["tools"].([]any)
+	for _, t := range tools {
+		out[t.(map[string]any)["name"].(string)] = true
+	}
+	return out
+}
+
+func TestMCPDiscoveryAndUnauthenticated(t *testing.T) {
+	e := newEnv(t)
+	pr := e.mustOK(e.get("/.well-known/oauth-protected-resource", anon))
+	if pr.str("resource") != "http://localhost:8090/mcp" || pr.list("authorization_servers")[0] != "http://localhost:8090" {
+		t.Fatalf("protected resource: %s", pr.Raw)
+	}
+	e.mustOK(e.get("/.well-known/oauth-protected-resource/mcp", anon))
+	as := e.mustOK(e.get("/.well-known/oauth-authorization-server", anon))
+	if as.str("token_endpoint") != "http://localhost:8090/oauth/token" || as.list("code_challenge_methods_supported")[0] != "S256" {
+		t.Fatalf("server metadata: %s", as.Raw)
+	}
+	r := e.do("POST", "/mcp", map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize"}, anon)
+	if r.Status != 401 || !strings.Contains(r.Header.Get("WWW-Authenticate"), `resource_metadata="http://localhost:8090/.well-known/oauth-protected-resource"`) {
+		t.Fatalf("no token: %d %q", r.Status, r.Header.Get("WWW-Authenticate"))
+	}
+	// A dashboard session cookie is not an MCP credential.
+	expectStatus(t, "cookie only", e.do("POST", "/mcp", map[string]any{"jsonrpc": "2.0", "id": 1, "method": "ping"}, e.officer()), 401)
+	r = e.do("POST", "/mcp", map[string]any{"jsonrpc": "2.0", "id": 1, "method": "ping"}, bearer("cseed_at_bogus"))
+	if r.Status != 401 || !strings.Contains(r.Header.Get("WWW-Authenticate"), `error="invalid_token"`) {
+		t.Fatalf("bad token: %d %q", r.Status, r.Header.Get("WWW-Authenticate"))
+	}
+	expectStatus(t, "GET /mcp has no stream", e.get("/mcp", anon), 405)
+	pre := e.do("OPTIONS", "/mcp", nil, anon)
+	if pre.Status != 204 || pre.Header.Get("Access-Control-Allow-Origin") != "*" {
+		t.Fatalf("preflight: %d %v", pre.Status, pre.Header)
+	}
+}
+
+func TestOAuthRegisterValidatesRedirects(t *testing.T) {
+	e := newEnv(t)
+	for _, bad := range []string{"javascript:alert(1)", "http://evil.example/cb", "data:text/html,x", "https://ok.example/cb#frag", "not a url"} {
+		r := e.do("POST", "/oauth/register", map[string]any{"client_name": "x", "redirect_uris": []string{bad}}, loopback(anon))
+		if r.Status != 400 || r.str("error") != "invalid_redirect_uri" {
+			t.Fatalf("%s accepted: %d %s", bad, r.Status, r.Raw)
+		}
+	}
+	expectStatus(t, "no uris", e.do("POST", "/oauth/register", map[string]any{"client_name": "x"}, loopback(anon)), 400)
+	expectStatus(t, "confidential client", e.do("POST", "/oauth/register", map[string]any{"redirect_uris": []string{testRedirect}, "token_endpoint_auth_method": "client_secret_basic"}, loopback(anon)), 400)
+	for _, good := range []string{"https://claude.ai/api/mcp/auth_callback", "http://localhost:6274/oauth/callback", "cursor://anysphere.cursor-retrieval/oauth/callback"} {
+		registerClient(t, e, "ok", good)
+	}
+}
+
+func TestOAuthAuthorizeFlowAndConsent(t *testing.T) {
+	e := newEnv(t)
+	clientID := registerClient(t, e, `<b>Evil</b> Agent`)
+	_, challenge := pkcePair()
+	q := authorizeForm(clientID, challenge, "")
+	q.Del("decision")
+	path := "/oauth/authorize?" + q.Encode()
+
+	// Signed out: off to sign-in, coming back to the same authorize URL.
+	r := e.get(path, anon)
+	if r.Status != 302 || r.Header.Get("Location") != "/login?next="+url.QueryEscape(path) {
+		t.Fatalf("signed out: %d %q", r.Status, r.Header.Get("Location"))
+	}
+	if got := auth.SafeNext(path); got != path {
+		t.Fatalf("post-login redirect drops the authorize URL: %q", got)
+	}
+	// Signed in: the consent page, escaped, framed nowhere, no script.
+	r = e.get(path, e.officer())
+	page := string(r.Raw)
+	if r.Status != 200 || !strings.Contains(page, "&lt;b&gt;Evil&lt;/b&gt; Agent") || strings.Contains(page, "<b>Evil") || !strings.Contains(page, "Priya Shah") {
+		t.Fatalf("consent page: %d %s", r.Status, page)
+	}
+	if csp := r.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "frame-ancestors 'none'") || strings.Contains(csp, "script-src") {
+		t.Fatalf("consent CSP: %q", csp)
+	}
+	// Browsers send Origin: null from a no-referrer page, and the Allow post would be refused.
+	if rp := r.Header.Get("Referrer-Policy"); rp != "same-origin" {
+		t.Fatalf("consent Referrer-Policy: %q", rp)
+	}
+	// An unregistered redirect URI gets an error page, never a redirect.
+	bad := authorizeForm(clientID, challenge, "")
+	bad.Set("redirect_uri", "https://evil.example/cb")
+	if r := e.get("/oauth/authorize?"+bad.Encode(), e.officer()); r.Status != 400 || r.Header.Get("Location") != "" {
+		t.Fatalf("unregistered redirect: %d %q", r.Status, r.Header.Get("Location"))
+	}
+	if r := e.get("/oauth/authorize?client_id=nope&redirect_uri="+url.QueryEscape(testRedirect), e.officer()); r.Status != 400 || r.Header.Get("Location") != "" {
+		t.Fatalf("unknown client: %d", r.Status)
+	}
+	// Loopback redirects may change port (RFC 8252).
+	port := authorizeForm(clientID, challenge, "")
+	port.Set("redirect_uri", "http://127.0.0.1:9999/callback")
+	expectStatus(t, "loopback port", e.get("/oauth/authorize?"+port.Encode(), e.officer()), 200)
+	// PKCE is required.
+	noPKCE := authorizeForm(clientID, "", "")
+	noPKCE.Del("code_challenge")
+	r = e.get("/oauth/authorize?"+noPKCE.Encode(), e.officer())
+	if loc, _ := url.Parse(r.Header.Get("Location")); r.Status != 302 || loc.Query().Get("error") != "invalid_request" {
+		t.Fatalf("no PKCE: %d %q", r.Status, r.Header.Get("Location"))
+	}
+	// Cancel tells the client access_denied.
+	r = e.do("POST", "/oauth/authorize", authorizeForm(clientID, challenge, "deny"), loopback(e.officer()))
+	if loc, _ := url.Parse(r.Header.Get("Location")); r.Status != 302 || loc.Query().Get("error") != "access_denied" || loc.Query().Get("state") != "st8" {
+		t.Fatalf("deny: %d %q", r.Status, r.Header.Get("Location"))
+	}
+	// A cross-site post cannot authorize.
+	xs := loopback(e.officer())
+	xs.headers = map[string]string{"Origin": "https://evil.example"}
+	expectStatus(t, "cross-origin allow", e.do("POST", "/oauth/authorize", authorizeForm(clientID, challenge, "allow"), xs), 403)
+	// Signed out post shows an error, issues nothing.
+	if r := e.do("POST", "/oauth/authorize", authorizeForm(clientID, challenge, "allow"), loopback(anon)); r.Status != 401 || r.Header.Get("Location") != "" {
+		t.Fatalf("signed-out allow: %d %q", r.Status, r.Header.Get("Location"))
+	}
+}
+
+func TestOAuthTokenExchangeAndRefresh(t *testing.T) {
+	e := newEnv(t)
+	clientID := registerClient(t, e, "Claude Code")
+	verifier, challenge := pkcePair()
+	code := func() string {
+		r := e.do("POST", "/oauth/authorize", authorizeForm(clientID, challenge, "allow"), loopback(e.officer()))
+		loc, _ := url.Parse(r.Header.Get("Location"))
+		return loc.Query().Get("code")
+	}
+	exchange := func(c, v, cid string) reply {
+		return e.do("POST", "/oauth/token", url.Values{"grant_type": {"authorization_code"}, "code": {c}, "code_verifier": {v}, "client_id": {cid}}, loopback(anon))
+	}
+	other, _ := pkcePair()
+	if r := exchange(code(), other, clientID); r.Status != 400 || r.str("error") != "invalid_grant" {
+		t.Fatalf("wrong verifier: %d %s", r.Status, r.Raw)
+	}
+	c := code()
+	if r := exchange(c, verifier, "mcp_other"); r.Status != 400 {
+		t.Fatalf("wrong client: %d", r.Status)
+	}
+	// The failed attempt above consumed the code: codes are single use either way.
+	expectStatus(t, "reused code", exchange(c, verifier, clientID), 400)
+	c = code()
+	e.clock = e.clock.Add(oauthCodeTTL + time.Second)
+	expectStatus(t, "expired code", exchange(c, verifier, clientID), 400)
+	e.clock = testNow
+
+	tok := e.mustOK(exchange(code(), verifier, clientID))
+	if tok.str("token_type") != "Bearer" || tok.num("expires_in") != 3600 || tok.Header.Get("Cache-Control") != "no-store" {
+		t.Fatalf("token response: %s", tok.Raw)
+	}
+	access, refresh := tok.str("access_token"), tok.str("refresh_token")
+	if r := mcpRPC(e, access, "ping", nil); r.Status != 200 {
+		t.Fatalf("ping: %d %s", r.Status, r.Raw)
+	}
+	// Refresh rotates both tokens; the old ones stop working.
+	ref := func(rt string) reply {
+		return e.do("POST", "/oauth/token", url.Values{"grant_type": {"refresh_token"}, "refresh_token": {rt}, "client_id": {clientID}}, loopback(anon))
+	}
+	next := e.mustOK(ref(refresh))
+	expectStatus(t, "rotated refresh", ref(refresh), 400)
+	expectStatus(t, "rotated access", e.do("POST", "/mcp", map[string]any{"jsonrpc": "2.0", "id": 1, "method": "ping"}, bearer(access)), 401)
+	access = next.str("access_token")
+	if r := mcpRPC(e, access, "ping", nil); r.Status != 200 {
+		t.Fatalf("ping after refresh: %d", r.Status)
+	}
+	// Access tokens expire after an hour.
+	e.clock = e.clock.Add(oauthAccessTTL + time.Second)
+	expectStatus(t, "expired access", e.do("POST", "/mcp", map[string]any{"jsonrpc": "2.0", "id": 1, "method": "ping"}, bearer(access)), 401)
+	e.mustOK(ref(next.str("refresh_token")))
+	e.clock = testNow
+	expectStatus(t, "unknown grant type", e.do("POST", "/oauth/token", url.Values{"grant_type": {"password"}}, loopback(anon)), 400)
+}
+
+func TestMCPToolsActAsTheOfficer(t *testing.T) {
+	e := newEnv(t)
+	_, officerTok := connectAgent(t, e, "user-priya", "Claude Code")
+	_, directorTok := connectAgent(t, e, "user-director", "Cursor")
+	ot, dt := officerTok.str("access_token"), directorTok.str("access_token")
+
+	init := mcpRPC(e, ot, "initialize", map[string]any{"protocolVersion": "2025-06-18", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "t", "version": "1"}})
+	if init.Result["protocolVersion"] != "2025-06-18" || init.Result["instructions"] == "" {
+		t.Fatalf("initialize: %s", init.Raw)
+	}
+	if r := e.do("POST", "/mcp", map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"}, bearer(ot)); r.Status != 202 {
+		t.Fatalf("notification: %d %s", r.Status, r.Raw)
+	}
+	if r := mcpRPC(e, ot, "nope", nil); r.Error == nil || r.Error["code"].(float64) != -32601 {
+		t.Fatalf("unknown method: %s", r.Raw)
+	}
+
+	// The tool list follows the role: officers are not offered director tools.
+	officerTools, directorTools := toolNames(mcpRPC(e, ot, "tools/list", nil)), toolNames(mcpRPC(e, dt, "tools/list", nil))
+	if !officerTools["create_event"] || officerTools["approve_purchase_request"] || officerTools["update_member"] {
+		t.Fatalf("officer tools: %v", officerTools)
+	}
+	if !directorTools["approve_purchase_request"] || !directorTools["update_member"] || directorTools["set_buildspace_schedule"] {
+		t.Fatalf("director tools: %v", directorTools)
+	}
+	// And calling one anyway is refused.
+	if text, isErr := toolCall(e, ot, "update_member", map[string]any{"id": "x", "body": map[string]any{}}); !isErr || !strings.Contains(text, "director") {
+		t.Fatalf("officer update_member: %v %s", isErr, text)
+	}
+
+	text, isErr := toolCall(e, ot, "whoami", nil)
+	if isErr || !strings.Contains(text, `"id":"user-priya"`) {
+		t.Fatalf("whoami: %s", text)
+	}
+	// A write lands as the officer, via the agent, in the audit log.
+	text, isErr = toolCall(e, ot, "create_contact", map[string]any{"body": map[string]any{"name": "Grace Agent", "type": "speaker"}})
+	if isErr {
+		t.Fatalf("create_contact: %s", text)
+	}
+	var created struct{ Contact struct{ ID string } }
+	_ = json.Unmarshal([]byte(text), &created)
+	var actor, agentName string
+	if err := e.db.R.QueryRow(`SELECT a.actor_user_id, c.name FROM audit_log a JOIN oauth_grants g ON g.id = a.actor_agent_id JOIN oauth_clients c ON c.id = g.client_id WHERE a.entity_id = ?`, created.Contact.ID).Scan(&actor, &agentName); err != nil {
+		t.Fatal(err)
+	}
+	if actor != "user-priya" || agentName != "Claude Code" {
+		t.Fatalf("audit: %s via %s", actor, agentName)
+	}
+	audit := e.mustOK(e.get("/api/admin/audit?entityType=contact&entityId="+created.Contact.ID, e.director()))
+	if audit.str("items", 0, "actorAgentName") != "Claude Code" {
+		t.Fatalf("audit API: %s", audit.Raw)
+	}
+	// Path parameters, queries and validation errors pass through.
+	text, isErr = toolCall(e, ot, "get_contact", map[string]any{"id": created.Contact.ID})
+	if isErr || !strings.Contains(text, "Grace Agent") {
+		t.Fatalf("get_contact: %s", text)
+	}
+	text, isErr = toolCall(e, ot, "list_contacts", map[string]any{"q": "Grace"})
+	if isErr || !strings.Contains(text, created.Contact.ID) {
+		t.Fatalf("list_contacts: %s", text)
+	}
+	if text, isErr = toolCall(e, ot, "create_contact", map[string]any{"body": map[string]any{"type": "speaker"}}); !isErr || !strings.Contains(text, "HTTP 400") {
+		t.Fatalf("validation error: %s", text)
+	}
+	if text, isErr = toolCall(e, ot, "get_contact", map[string]any{}); !isErr || !strings.Contains(text, "id") {
+		t.Fatalf("missing path param: %s", text)
+	}
+	if text, isErr = toolCall(e, ot, "get_contact", map[string]any{"id": "../../admin/users"}); !isErr || !strings.Contains(text, "404") {
+		t.Fatalf("path escape: %s", text)
+	}
+	if r := mcpRPC(e, ot, "tools/call", map[string]any{"name": "no_such_tool"}); r.Error == nil {
+		t.Fatalf("unknown tool: %s", r.Raw)
+	}
+	// Money moves only through the same handler rules: a director's agent approves an
+	// officer's submitted request; the requester's own agent cannot.
+	if text, isErr := toolCall(e, ot, "approve_purchase_request", map[string]any{"id": "req-0005", "body": map[string]any{}}); !isErr {
+		t.Fatalf("officer approved via agent: %s", text)
+	}
+	text, isErr = toolCall(e, dt, "approve_purchase_request", map[string]any{"id": "req-0005", "body": map[string]any{"comment": "ok"}})
+	if isErr || !strings.Contains(text, `"status":"approved"`) {
+		t.Fatalf("director approve via agent: %s", text)
+	}
+}
+
+func TestMCPUploadTool(t *testing.T) {
+	e := newEnv(t)
+	_, tok := connectAgent(t, e, "user-priya", "Claude Code")
+	text, isErr := toolCall(e, tok.str("access_token"), "create_purchase_request", nil)
+	if !isErr {
+		t.Fatalf("create without body should fail validation: %s", text)
+	}
+	var id string
+	if err := e.db.R.QueryRow(`SELECT id FROM purchase_requests WHERE requester_id = 'user-priya' AND status NOT IN ('closed','cancelled','denied') LIMIT 1`).Scan(&id); err != nil {
+		t.Skip("no open request for user-priya in seed data")
+	}
+	pdf := base64.StdEncoding.EncodeToString([]byte("%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n"))
+	text, isErr = toolCall(e, tok.str("access_token"), "attach_receipt", map[string]any{"id": id, "filename": "receipt.pdf", "mimeType": "application/pdf", "contentBase64": pdf})
+	if isErr || !strings.Contains(text, "receipt.pdf") {
+		t.Fatalf("attach_receipt: %s", text)
+	}
+	if text, isErr = toolCall(e, tok.str("access_token"), "attach_receipt", map[string]any{"id": id, "filename": "x.pdf", "mimeType": "application/pdf", "contentBase64": "!!!"}); !isErr || !strings.Contains(text, "base64") {
+		t.Fatalf("bad base64: %s", text)
+	}
+}
+
+func TestConnectedAgentsAndRevocation(t *testing.T) {
+	e := newEnv(t)
+	cid, tok := connectAgent(t, e, "user-priya", "Claude Code")
+	access := tok.str("access_token")
+	list := e.mustOK(e.get("/api/me/agents", e.officer()))
+	if len(list.list("agents")) != 1 || list.str("agents", 0, "clientName") != "Claude Code" {
+		t.Fatalf("agents: %s", list.Raw)
+	}
+	id := list.str("agents", 0, "id")
+	if len(e.mustOK(e.get("/api/me/agents", e.director())).list("agents")) != 0 {
+		t.Fatal("another officer's agents leaked")
+	}
+	expectStatus(t, "disconnect someone else's", e.do("DELETE", "/api/me/agents/"+id, nil, e.director()), 404)
+	e.mustOK(e.do("DELETE", "/api/me/agents/"+id, nil, e.officer()))
+	expectStatus(t, "disconnected", e.do("POST", "/mcp", map[string]any{"jsonrpc": "2.0", "id": 1, "method": "ping"}, bearer(access)), 401)
+	expectStatus(t, "refresh after disconnect", e.do("POST", "/oauth/token", url.Values{"grant_type": {"refresh_token"}, "refresh_token": {tok.str("refresh_token")}, "client_id": {cid}}, loopback(anon)), 400)
+	expectStatus(t, "disconnect twice", e.do("DELETE", "/api/me/agents/"+id, nil, e.officer()), 404)
+
+	// Deactivation cuts every agent off at once.
+	_, tok = connectAgent(t, e, "user-priya", "Cursor")
+	e.mustOK(e.do("PATCH", "/api/admin/users/user-priya", map[string]any{"active": false}, e.director()))
+	expectStatus(t, "deactivated officer's agent", e.do("POST", "/mcp", map[string]any{"jsonrpc": "2.0", "id": 1, "method": "ping"}, bearer(tok.str("access_token"))), 401)
+	var live int
+	if err := e.db.R.QueryRow(`SELECT count(*) FROM oauth_grants WHERE user_id = 'user-priya' AND revoked_at IS NULL`).Scan(&live); err != nil || live != 0 {
+		t.Fatalf("grants left live after deactivation: %d %v", live, err)
+	}
+	// An inactive officer cannot authorize a new agent either.
+	clientID := registerClient(t, e, "Again")
+	_, challenge := pkcePair()
+	if r := e.do("POST", "/oauth/authorize", authorizeForm(clientID, challenge, "allow"), loopback(e.as("user-priya"))); r.Header.Get("Location") != "" {
+		t.Fatalf("inactive officer authorized: %d %q", r.Status, r.Header.Get("Location"))
+	}
+}
+
+// Every tool must name a real route, or the agent gets "Endpoint not found".
+func TestMCPToolsMatchRoutes(t *testing.T) {
+	e := newEnv(t)
+	mux := http.NewServeMux()
+	e.srv.routes(mux)
+	if len(mcpTools) < 50 {
+		t.Fatalf("only %d tools loaded", len(mcpTools))
+	}
+	for _, tool := range mcpTools {
+		pattern := tool.Path
+		for _, seg := range strings.Split(tool.Path, "/") {
+			if strings.HasPrefix(seg, ":") {
+				pattern = strings.Replace(pattern, seg, "{"+seg[1:]+"}", 1)
+			}
+		}
+		req, _ := http.NewRequest(tool.Method, "http://localhost"+strings.ReplaceAll(tool.Path, ":", "x"), nil)
+		_, got := mux.Handler(req)
+		if got != tool.Method+" "+pattern {
+			t.Errorf("%s: %s %s routes to %q", tool.Name, tool.Method, tool.Path, got)
+		}
+		if strings.HasPrefix(tool.Path, "/api/admin") || strings.HasPrefix(tool.Path, "/api/ingest") || strings.HasPrefix(tool.Path, "/api/agent") || strings.HasPrefix(tool.Path, "/auth") {
+			t.Errorf("%s exposes %s", tool.Name, tool.Path)
+		}
+		var schema map[string]any
+		if err := json.Unmarshal(tool.InputSchema, &schema); err != nil || schema["type"] != "object" {
+			t.Errorf("%s: input schema must be an object: %v", tool.Name, err)
+		}
+	}
+}

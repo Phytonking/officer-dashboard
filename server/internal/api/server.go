@@ -69,6 +69,9 @@ type Server struct {
 	secure bool
 	host   string // APP_URL host, for the Origin check
 
+	// inner is the routed handler behind withAuth; MCP tool calls run through it in-process.
+	inner http.Handler
+
 	authLimit, uploadLimit *rateLimiter
 	trustedProxies         []*net.IPNet
 
@@ -148,6 +151,8 @@ type Ctx struct {
 	Token *store.ServiceToken
 	// SessionID is the sha256 of the session cookie, used by logout.
 	SessionID string
+	// Agent is the MCP agent grant id when an agent is acting as User; "" otherwise.
+	Agent string
 }
 
 func (c *Ctx) Context() context.Context { return c.R.Context() }
@@ -180,6 +185,7 @@ func (s *Server) Handler() http.Handler {
 	s.routes(mux)
 	var h http.Handler = mux
 	h = s.withAuth(h)
+	s.inner = h
 	h = s.withRateLimit(h)
 	h = s.withAPIHygiene(h)
 	h = s.withRecover(h)
@@ -190,7 +196,7 @@ func (s *Server) wrap(fn handlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		c := &Ctx{S: s, W: w, R: r}
 		if v, ok := r.Context().Value(principalKey{}).(principal); ok {
-			c.User, c.SessionID = v.user, v.sessionID
+			c.User, c.SessionID, c.Agent = v.user, v.sessionID, v.agentID
 		}
 		if err := fn(c); err != nil {
 			writeError(w, toAPIError(err, s.log))

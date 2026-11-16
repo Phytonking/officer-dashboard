@@ -136,6 +136,8 @@ and response is a zod schema there with its TypeScript type inferred under the s
 | POST | `/api/admin/tokens` | director | — | `ServiceTokenCreateRequest` | `ServiceTokenCreateResponse` |
 | DELETE | `/api/admin/tokens/:id` | director | — | — | `OkResponse` |
 | GET | `/api/admin/audit` | director | `AuditLogQuery` | — | `AuditLogResponse` |
+| GET | `/api/me/agents` | officer | — | — | `ConnectedAgentsResponse` |
+| DELETE | `/api/me/agents/:id` | officer | — | — | `OkResponse` |
 | GET | `/api/agent/jobs` | token:agent:jobs | `AgentJobsQuery` | — | `AgentJobsResponse` |
 | POST | `/api/agent/jobs/:id/claim` | token:agent:jobs | — | — | `AgentJobResponse` |
 | POST | `/api/agent/jobs/:id/complete` | token:agent:jobs | — | `AgentJobCompleteRequest` | `AgentJobResponse` |

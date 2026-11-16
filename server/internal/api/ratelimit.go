@@ -184,7 +184,7 @@ func ipKey(ip net.IP) string {
 // routes (expensive, and the ones a script would hammer). Everything else is unlimited.
 func limitedRoute(r *http.Request) string {
 	p := cleanPath(r.URL.Path)
-	if strings.HasPrefix(p, "/auth/") || p == "/api/portal/invite" {
+	if strings.HasPrefix(p, "/auth/") || p == "/api/portal/invite" || (strings.HasPrefix(p, "/oauth/") && r.Method == http.MethodPost) {
 		return "auth"
 	}
 	if r.Method == http.MethodGet || r.Method == http.MethodHead {
