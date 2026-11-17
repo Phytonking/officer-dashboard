@@ -404,6 +404,13 @@ func TestConnectedAgentsAndRevocation(t *testing.T) {
 	if err := e.db.R.QueryRow(`SELECT count(*) FROM oauth_grants WHERE user_id = 'user-priya' AND revoked_at IS NULL`).Scan(&live); err != nil || live != 0 {
 		t.Fatalf("grants left live after deactivation: %d %v", live, err)
 	}
+	// Revoked on the server's clock, and audited with the count.
+	if n := e.scalar(`SELECT count(*) FROM oauth_grants WHERE user_id = 'user-priya' AND revoked_at != ?`, e.clock.UnixMilli()).(int64); n != 0 {
+		t.Fatalf("revoked_at not the server clock: %d", n)
+	}
+	if got := e.scalar(`SELECT after_json FROM audit_log WHERE action = 'agent.revoked_with_user' AND entity_id = 'user-priya'`); got == nil || !strings.Contains(got.(string), `"count":1`) {
+		t.Fatalf("deactivation's agent revocation not audited: %v", got)
+	}
 	// An inactive officer cannot authorize a new agent either.
 	clientID := registerClient(t, e, "Again")
 	_, challenge := pkcePair()
@@ -662,6 +669,13 @@ func TestOAuthRefreshReuseRevokes(t *testing.T) {
 		return e.do("POST", "/oauth/token", url.Values{"grant_type": {"refresh_token"}, "refresh_token": {rt}, "client_id": {cid}}, loopback(anon))
 	}
 	next := e.mustOK(refresh(tok.str("refresh_token")))
+	// The same token again at once is the client refreshing twice concurrently (two windows
+	// sharing a sign-in): it loses the race, and the agent stays connected.
+	expectStatus(t, "concurrent refresh", refresh(tok.str("refresh_token")), 400)
+	e.mustOK(e.do("POST", "/mcp", map[string]any{"jsonrpc": "2.0", "id": 1, "method": "ping"}, bearer(next.str("access_token"))))
+	// Past the race window, a replay means a leaked copy.
+	e.clock = e.clock.Add(oauthRefreshRaceGrace)
+	defer func() { e.clock = testNow }()
 	expectStatus(t, "replayed old refresh", refresh(tok.str("refresh_token")), 400)
 	expectStatus(t, "current refresh after replay", refresh(next.str("refresh_token")), 400)
 	expectStatus(t, "access after replay", e.do("POST", "/mcp", map[string]any{"jsonrpc": "2.0", "id": 1, "method": "ping"}, bearer(next.str("access_token"))), 401)
@@ -849,5 +863,74 @@ func TestMCPLaunchpadInviteNeedsMailer(t *testing.T) {
 	}
 	if e.scalar(`SELECT count(*) FROM buildspace_launchpad_accounts WHERE email='x.y@uw.edu'`).(int64) != 0 {
 		t.Fatal("an account was created anyway")
+	}
+}
+
+// A redeemed code presented again revokes the tokens it bought (RFC 6749 §4.1.2); a code
+// that never produced tokens (its one try failed) is simply refused.
+func TestOAuthCodeReplayRevokes(t *testing.T) {
+	e := newEnv(t)
+	clientID := registerClient(t, e, "Claude Code")
+	verifier, challenge := pkcePair()
+	code := func() string {
+		r := e.do("POST", "/oauth/authorize", authorizeForm(clientID, challenge, "allow"), loopback(e.officer()))
+		loc, _ := url.Parse(r.Header.Get("Location"))
+		return loc.Query().Get("code")
+	}
+	exchange := func(c string) reply {
+		return e.do("POST", "/oauth/token", url.Values{"grant_type": {"authorization_code"}, "code": {c}, "code_verifier": {verifier}, "client_id": {clientID}}, loopback(anon))
+	}
+	c := code()
+	tok := e.mustOK(exchange(c))
+	ping := func() int {
+		return e.do("POST", "/mcp", map[string]any{"jsonrpc": "2.0", "id": 1, "method": "ping"}, bearer(tok.str("access_token"))).Status
+	}
+	if ping() != 200 {
+		t.Fatal("fresh token refused")
+	}
+	if r := exchange(c); r.Status != 400 || r.str("error") != "invalid_grant" {
+		t.Fatalf("replayed code: %d %s", r.Status, r.Raw)
+	}
+	if ping() != 401 {
+		t.Fatal("tokens from a replayed code still work")
+	}
+	if e.scalar(`SELECT count(*) FROM audit_log WHERE action = 'agent.revoked_code_reuse'`).(int64) != 1 {
+		t.Fatal("code replay not audited")
+	}
+	expectStatus(t, "third try", exchange(c), 400)
+	if e.scalar(`SELECT count(*) FROM audit_log WHERE action = 'agent.revoked_code_reuse'`).(int64) != 1 {
+		t.Fatal("a revoked grant was revoked (and audited) again")
+	}
+	// A late replay (past expiry, inside the hour codes are kept) is still recognised.
+	c = code()
+	tok = e.mustOK(exchange(c))
+	e.clock = e.clock.Add(30 * time.Minute)
+	defer func() { e.clock = testNow }()
+	expectStatus(t, "late replay", exchange(c), 400)
+	if e.scalar(`SELECT count(*) FROM oauth_grants WHERE revoked_at IS NULL`).(int64) != 0 {
+		t.Fatal("late replay left the grant live")
+	}
+}
+
+// A signed-out officer goes to sign-in with the authorize URL in a cookie; one too long for
+// a cookie gets a page instead of a silent drop to the home page.
+func TestOAuthAuthorizeLongRequestWhileSignedOut(t *testing.T) {
+	e := newEnv(t)
+	clientID := registerClient(t, e, "Claude Code")
+	_, challenge := pkcePair()
+	q := authorizeForm(clientID, challenge, "")
+	q.Del("decision")
+	if r := e.get("/oauth/authorize?"+q.Encode(), anon); r.Status != 302 || !strings.HasPrefix(r.Header.Get("Location"), "/login?next=") {
+		t.Fatalf("short: %d %s", r.Status, r.Header.Get("Location"))
+	}
+	q.Set("state", strings.Repeat("s", 1000))
+	q.Set("extra", strings.Repeat("%", 700)) // escapes to 2100 bytes
+	r := e.get("/oauth/authorize?"+q.Encode(), anon)
+	if r.Status != 400 || r.Header.Get("Location") != "" || !strings.Contains(string(r.Raw), "Sign in to the dashboard in this browser first") {
+		t.Fatalf("long: %d %s", r.Status, r.Header.Get("Location"))
+	}
+	// Signed in, the same request shows consent: the cookie is not needed.
+	if r := e.get("/oauth/authorize?"+q.Encode(), e.officer()); r.Status != 200 {
+		t.Fatalf("long, signed in: %d", r.Status)
 	}
 }

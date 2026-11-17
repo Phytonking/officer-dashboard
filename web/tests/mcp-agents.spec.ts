@@ -262,17 +262,24 @@ for (const theme of ['light', 'dark'] as Theme[]) {
   });
 }
 
-test('audit log: agent actions read "Name via Agent", and the AI agents filter', async ({ page, baseURL }) => {
+test('audit log: agent actions read "Name via Agent", the who filter keeps them, and the AI agents filter', async ({ page, baseURL }) => {
   desktopOnly();
   const errors = watchErrors(page);
   const a = await connectAgent(baseURL!, 'director', 'Audit Agent');
   const created = await tool(a.browser, a.access, 'create_contact', { body: { name: `Audit contact ${Date.now()}`, type: 'speaker' } });
   expect(created.isError, created.text).toBe(false);
+  const who = await tool(a.browser, a.access, 'whoami');
   await devSignIn(page, { as: 'director' }, '/officers?tab=audit');
   await settle(page);
   const row = page.locator('.audit-row').filter({ hasText: 'via Audit Agent' }).filter({ hasText: 'created contact' });
   await expect(row.first()).toBeVisible();
   if (SHOTS) await page.screenshot({ path: `${shotDir}/audit-via-agent.png` });
+  // The "who" filter groups an officer with their agents: picking the director keeps the row.
+  const options = await page.locator('#audit-actor option').allTextContents();
+  expect(options.some((o) => / via /.test(o)), options.join(' | ')).toBe(false);
+  await page.locator('#audit-actor').selectOption(who.json.user.name);
+  await expect(row.first()).toBeVisible();
+  await page.locator('#audit-actor').selectOption('');
   await page.locator('#audit-type').selectOption('agent');
   await expect(page.locator('.audit-row').first()).toContainText(/connected agent|disconnected agent/);
   const texts = await page.locator('.audit-row').allTextContents();
@@ -371,7 +378,7 @@ test('authorize: open redirect closed, PKCE and resource enforced', async ({ pag
 
 test('tokens: PKCE, single-use codes, refresh rotation, reuse revokes', async ({ page, baseURL }) => {
   desktopOnly();
-  const ev = new Evidence('tokens', 'Code exchange and refresh', 'Codes are single use (even after a failed try) and bound to the client and PKCE verifier. Refresh rotates both tokens; replaying an old refresh token revokes the connection (RFC 9700).');
+  const ev = new Evidence('tokens', 'Code exchange and refresh', 'Codes are single use (even after a failed try) and bound to the client and PKCE verifier; replaying a redeemed code revokes its tokens. Refresh rotates both tokens; replaying an old refresh token revokes the connection (RFC 9700), except within 10 seconds of the rotation (a concurrent refresh).');
   const officer = await session(baseURL!, 'officer');
   try {
     const reg = await register(officer, 'Token test');
@@ -409,12 +416,23 @@ test('tokens: PKCE, single-use codes, refresh rotation, reuse revokes', async ({
     const t3 = await noClient.json();
     ev.step({ label: 'refresh without client_id', request: 'POST /oauth/token', status: noClient.status() });
     ev.check(noClient.status() === 200, 'client_id is optional on refresh');
+    const race = await refresh(t2.refresh_token);
+    const during = await rpc(officer, t3.access_token, { jsonrpc: '2.0', id: 1, method: 'ping' });
+    ev.step({ label: 'same token again at once (two windows refreshing)', request: 'POST /oauth/token, then POST /mcp', status: `${race.status()}, ${during.status}` });
+    ev.check(race.status() === 400 && during.status === 200, 'a concurrent refresh loses the race but does not disconnect the agent');
+    await new Promise((r) => setTimeout(r, 10_500)); // past the 10-second race window
     const replay = await refresh(t2.refresh_token);
-    ev.step({ label: 'replay a rotated refresh token', request: 'POST /oauth/token', status: replay.status(), body: await replay.json() });
+    ev.step({ label: 'replay a rotated refresh token later', request: 'POST /oauth/token', status: replay.status(), body: await replay.json() });
     ev.check(replay.status() === 400, 'the replay is refused');
     const after = await rpc(officer, t3.access_token, { jsonrpc: '2.0', id: 1, method: 'ping' });
     ev.step({ label: 'current token after the replay', request: 'POST /mcp', status: after.status });
     ev.check(after.status === 401, 'the whole connection is revoked: someone else held a copy');
+    const c4 = await code(p.challenge);
+    const t4 = await (await exchange(c4, p.verifier)).json();
+    const codeReplay = await exchange(c4, p.verifier);
+    const afterCode = await rpc(officer, t4.access_token, { jsonrpc: '2.0', id: 1, method: 'ping' });
+    ev.step({ label: 'redeem a code, then present it again', request: 'POST /oauth/token ×2, then POST /mcp', status: `${codeReplay.status()}, ${afterCode.status}` });
+    ev.check(codeReplay.status() === 400 && afterCode.status === 401, 'a replayed code revokes the tokens it bought (RFC 6749 §4.1.2)');
   } finally {
     await ev.render(page);
   }
@@ -748,6 +766,8 @@ const GO_TESTS = [
   'TestMCPRateLimitPerAgent',
   'TestMCPLaunchpadTools',
   'TestMCPLaunchpadInviteNeedsMailer',
+  'TestOAuthCodeReplayRevokes',
+  'TestOAuthAuthorizeLongRequestWhileSignedOut',
 ];
 
 for (const name of GO_TESTS) {

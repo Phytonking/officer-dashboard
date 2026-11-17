@@ -38,17 +38,28 @@ agent ── POST /mcp  Authorization: Bearer … ─▶ tools
   role check, validation rule, lifecycle rule (no self-approval, payout tolerance, …) and
   onboarding gate applies unchanged. `tools/list` hides tools above the officer's role.
 - **Audit.** Every change is recorded as the officer, with the agent's grant in
-  `audit_log.actor_agent_id`; the audit log shows "Priya Shah via Claude Code".
+  `audit_log.actor_agent_id`; the audit log shows "Priya Shah via Claude Code", and its
+  "who" filter keeps an officer's agent actions under the officer.
   Connecting is logged as `agent.connected`, disconnecting as `agent.disconnected`.
 - **Revocation.** The user is reloaded on every call: deactivation stops the agent at once,
-  and also revokes all of the officer's grants (with their sessions). Role changes apply on
-  the next call. Officers disconnect agents from Settings.
+  and also revokes all of the officer's grants (with their sessions;
+  `agent.revoked_with_user` with the count). The operator CLI's leadership provisioning and
+  owner bootstrap sign the person out the same way and note `agentsDisconnected` in their
+  audit entry. Role changes apply on the next call. Officers disconnect agents from Settings.
 - **Storage.** Only SHA-256 hashes of codes and tokens are stored (`oauth_clients`,
   `oauth_codes`, `oauth_grants`). Codes are single use (burned even by a failed attempt) and
-  live 2 minutes.
+  live 2 minutes. A redeemed code presented again revokes the grant it produced
+  (`agent.revoked_code_reuse`, RFC 6749 §4.1.2); used codes are kept an hour past expiry for
+  that. `redirect_uri` at the token endpoint is optional (OAuth 2.1; PKCE binds the code)
+  but must match when sent.
 - **Refresh-token reuse.** Presenting a refresh token that was already rotated away means a
   copy leaked: the grant is revoked at once and `agent.revoked_token_reuse` is audited
-  (RFC 9700). Reconnecting the same client replaces its previous grant.
+  (RFC 9700). Within 10 seconds of the rotation it is instead the same client refreshing
+  twice at once (two windows sharing a sign-in): that request gets `invalid_grant` and the
+  agent stays connected. Reconnecting the same client replaces its previous grant.
+- **Sign-in round trip.** A signed-out officer goes to `/login?next=<authorize URL>`, which
+  rides in a cookie; an authorize URL over 3,000 bytes gets a "sign in first, then connect
+  again" page instead of being dropped silently.
 - **No open redirect.** Any visitor can register a client, so an invalid authorize request
   (bad `response_type`, missing PKCE, foreign `resource`, overlong `state`) shows an error
   page instead of redirecting. Only the officer's own Allow or Cancel goes back to the client.
@@ -70,8 +81,8 @@ agent ── POST /mcp  Authorization: Bearer … ─▶ tools
   Requests without a valid token get the usual 401 challenge before any budget is counted.
   POSTs to `/oauth/*` share the sign-in budget per IP; upload and import tools also draw on
   the same per-IP upload budget as the API routes.
-- **Housekeeping.** The hourly janitor drops expired codes and clients that never got a grant
-  within a week.
+- **Housekeeping.** The hourly janitor (its own transaction, apart from the session purge)
+  drops codes an hour past expiry and clients that never got a grant within a week.
 
 ## Tools
 

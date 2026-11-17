@@ -213,23 +213,27 @@ func limitedRoute(r *http.Request) string {
 	return ""
 }
 
+// allowRoute takes one request from the per-IP budget of a limitedRoute kind ("" is
+// unlimited); client is the request whose peer and X-Forwarded-For name the client. Both the
+// HTTP middleware and MCP tool calls (whose routed request is in-process) use it.
+func (s *Server) allowRoute(kind string, client *http.Request) (bool, time.Duration) {
+	if kind == "" {
+		return true, 0
+	}
+	ip, local := clientIP(client, s.trustedProxies)
+	if local {
+		return true, 0
+	}
+	l := s.authLimit
+	if kind == "upload" {
+		l = s.uploadLimit
+	}
+	return l.allow(ip)
+}
+
 func (s *Server) withRateLimit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		kind := limitedRoute(r)
-		if kind == "" {
-			next.ServeHTTP(w, r)
-			return
-		}
-		ip, local := clientIP(r, s.trustedProxies)
-		if local {
-			next.ServeHTTP(w, r)
-			return
-		}
-		l := s.authLimit
-		if kind == "upload" {
-			l = s.uploadLimit
-		}
-		if ok, wait := l.allow(ip); !ok {
+		if ok, wait := s.allowRoute(limitedRoute(r), r); !ok {
 			w.Header().Set("Retry-After", strconv.Itoa(retryAfter(wait)))
 			if strings.HasPrefix(r.URL.Path, "/api/") {
 				writeError(w, fail(http.StatusTooManyRequests, "rate_limited", "Too many requests; try again in a minute"))

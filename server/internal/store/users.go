@@ -206,13 +206,13 @@ func (q *Queries) DeleteSession(ctx context.Context, idHash string) error {
 }
 
 // DeleteUserSessions ends every session of a user and disconnects their MCP agents, so
-// signing someone out everywhere also cuts off the agents acting as them.
-func (q *Queries) DeleteUserSessions(ctx context.Context, userID string) error {
+// signing someone out everywhere also cuts off the agents acting as them. It reports how
+// many live agents were disconnected, for the caller's audit entry.
+func (q *Queries) DeleteUserSessions(ctx context.Context, userID string, now int64) (agents int64, err error) {
 	if _, err := q.q.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, userID); err != nil {
-		return err
+		return 0, err
 	}
-	_, err := q.q.ExecContext(ctx, `UPDATE oauth_grants SET revoked_at = CAST(unixepoch('subsec') * 1000 AS INTEGER) WHERE user_id = ? AND revoked_at IS NULL`, userID)
-	return err
+	return q.RevokeUserGrants(ctx, userID, now)
 }
 
 // PurgeExpiredSessions removes dead sessions (housekeeping).

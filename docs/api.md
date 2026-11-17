@@ -263,7 +263,8 @@ is `{ "results": [] }`. A missing or blank `q`, or a `limit` outside 1–50, is 
   SHA-256 hash is stored. Revoking keeps the row for the audit log. A token acts with its
   creator's authority: it answers 401 once the creator is inactive or below director, and
   deactivating or demoting the creator below director revokes their tokens
-  (`token.revoked_with_user` in the audit log).
+  (`token.revoked_with_user` in the audit log). Deactivation also disconnects the person's MCP
+  agents (`agent.revoked_with_user`, see [mcp.md](mcp.md)).
 - **Member paging.** Any officer may list members; reading past the first page
   (`offset > 0`) writes a `members.paged` audit row (offset, limit, rows returned, filters).
 - **Health.** `GET /api/health` returns `version` only to signed-in callers.

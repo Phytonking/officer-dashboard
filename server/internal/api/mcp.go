@@ -431,16 +431,8 @@ func (c *Ctx) mcpCall(p principal, t *mcpTool, args map[string]json.RawMessage) 
 	}
 	// Tool calls skip the outer middleware, so draw on the same per-IP upload/import budget
 	// the API routes do.
-	if kind := limitedRoute(req); kind != "" {
-		if ip, local := clientIP(c.R, c.S.trustedProxies); !local {
-			l := c.S.authLimit
-			if kind == "upload" {
-				l = c.S.uploadLimit
-			}
-			if ok, wait := l.allow(ip); !ok {
-				return toolText(fmt.Sprintf("Rate limited: too many uploads/imports; try again in %d seconds.", int(wait/time.Second)+1), true)
-			}
-		}
+	if ok, wait := c.S.allowRoute(limitedRoute(req), c.R); !ok {
+		return toolText(fmt.Sprintf("Rate limited: too many uploads/imports; try again in %d seconds.", retryAfter(wait)), true)
 	}
 	rec := &recorder{header: http.Header{}, status: 200}
 	c.S.inner.ServeHTTP(rec, req)

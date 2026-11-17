@@ -4,7 +4,17 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"strings"
 )
+
+// ErrCodeReused is TakeOAuthCode's answer for a code that was already redeemed; the code it
+// returns carries the grant that redemption produced (if any), to be revoked.
+var ErrCodeReused = errors.New("authorization code already used")
+
+// usedCodeKeepMs is how long past its expiry a code row is kept, so a late replay of a
+// redeemed code is still recognised.
+const usedCodeKeepMs = 60 * 60 * 1000
 
 // OAuthClient is an oauth_clients row: an MCP client (Claude Code, Cursor, …) that
 // registered itself. Clients are public (no secret); PKCE protects the code exchange.
@@ -47,6 +57,7 @@ type OAuthCode struct {
 	RedirectURI   string
 	CodeChallenge string
 	ExpiresAt     int64
+	GrantID       *string // the grant its redemption produced
 }
 
 // InsertOAuthCode stores a new authorization code.
@@ -56,19 +67,37 @@ func (q *Queries) InsertOAuthCode(ctx context.Context, c OAuthCode) error {
 	return err
 }
 
-// TakeOAuthCode deletes and returns a code, so it can be redeemed only once, and drops
-// any other expired codes on the way. ErrNotFound when it is unknown or already used.
+// TakeOAuthCode marks a code redeemed and returns it, so it can be redeemed only once, and
+// drops long-expired codes on the way. ErrNotFound when it is unknown; ErrCodeReused (with
+// the code) when it was already redeemed.
 func (q *Queries) TakeOAuthCode(ctx context.Context, codeHash string, now int64) (*OAuthCode, error) {
+	if _, err := q.q.ExecContext(ctx, `DELETE FROM oauth_codes WHERE expires_at <= ?`, now-usedCodeKeepMs); err != nil {
+		return nil, err
+	}
 	var c OAuthCode
-	err := q.q.QueryRowContext(ctx, `DELETE FROM oauth_codes WHERE code_hash = ? RETURNING code_hash, client_id, user_id, redirect_uri, code_challenge, expires_at`, codeHash).
+	var grant sql.NullString
+	err := q.q.QueryRowContext(ctx, `UPDATE oauth_codes SET used_at = ? WHERE code_hash = ? AND used_at IS NULL RETURNING code_hash, client_id, user_id, redirect_uri, code_challenge, expires_at`, now, codeHash).
 		Scan(&c.CodeHash, &c.ClientID, &c.UserID, &c.RedirectURI, &c.CodeChallenge, &c.ExpiresAt)
+	if err == nil {
+		return &c, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	err = q.q.QueryRowContext(ctx, `SELECT code_hash, client_id, user_id, grant_id FROM oauth_codes WHERE code_hash = ?`, codeHash).Scan(&c.CodeHash, &c.ClientID, &c.UserID, &grant)
 	if err != nil {
 		return nil, notFound(err)
 	}
-	if _, err := q.q.ExecContext(ctx, `DELETE FROM oauth_codes WHERE expires_at <= ?`, now); err != nil {
-		return nil, err
+	if grant.Valid {
+		c.GrantID = &grant.String
 	}
-	return &c, nil
+	return &c, ErrCodeReused
+}
+
+// SetCodeGrant records the grant a redeemed code produced.
+func (q *Queries) SetCodeGrant(ctx context.Context, codeHash, grantID string) error {
+	_, err := q.q.ExecContext(ctx, `UPDATE oauth_codes SET grant_id = ? WHERE code_hash = ?`, grantID, codeHash)
+	return err
 }
 
 // OAuthGrant is one connected agent: an officer's consent to one client, with the current
@@ -85,15 +114,16 @@ type OAuthGrant struct {
 	CreatedAt        int64
 	LastUsedAt       *int64
 	RevokedAt        *int64
+	RotatedAt        *int64 // when the refresh token last rotated
 }
 
-const grantCols = `g.id, g.client_id, c.name, g.user_id, g.access_hash, g.access_expires_at, g.refresh_hash, g.refresh_expires_at, g.created_at, g.last_used_at, g.revoked_at`
+const grantCols = `g.id, g.client_id, c.name, g.user_id, g.access_hash, g.access_expires_at, g.refresh_hash, g.refresh_expires_at, g.created_at, g.last_used_at, g.revoked_at, g.rotated_at`
 const grantFrom = ` FROM oauth_grants g JOIN oauth_clients c ON c.id = g.client_id`
 
 func scanGrant(s interface{ Scan(...any) error }) (*OAuthGrant, error) {
 	var g OAuthGrant
-	var used, rev sql.NullInt64
-	if err := s.Scan(&g.ID, &g.ClientID, &g.ClientName, &g.UserID, &g.AccessHash, &g.AccessExpiresAt, &g.RefreshHash, &g.RefreshExpiresAt, &g.CreatedAt, &used, &rev); err != nil {
+	var used, rev, rot sql.NullInt64
+	if err := s.Scan(&g.ID, &g.ClientID, &g.ClientName, &g.UserID, &g.AccessHash, &g.AccessExpiresAt, &g.RefreshHash, &g.RefreshExpiresAt, &g.CreatedAt, &used, &rev, &rot); err != nil {
 		return nil, err
 	}
 	if used.Valid {
@@ -101,6 +131,9 @@ func scanGrant(s interface{ Scan(...any) error }) (*OAuthGrant, error) {
 	}
 	if rev.Valid {
 		g.RevokedAt = &rev.Int64
+	}
+	if rot.Valid {
+		g.RotatedAt = &rot.Int64
 	}
 	return &g, nil
 }
@@ -156,9 +189,9 @@ func (q *Queries) UserGrants(ctx context.Context, userID string, now int64) ([]O
 }
 
 // RotateGrant replaces both tokens of a grant (refresh-token rotation).
-func (q *Queries) RotateGrant(ctx context.Context, id, accessHash string, accessExp int64, refreshHash string, refreshExp int64) error {
-	_, err := q.q.ExecContext(ctx, `UPDATE oauth_grants SET prev_refresh_hash = refresh_hash, access_hash = ?, access_expires_at = ?, refresh_hash = ?, refresh_expires_at = ? WHERE id = ?`,
-		accessHash, accessExp, refreshHash, refreshExp, id)
+func (q *Queries) RotateGrant(ctx context.Context, id, accessHash string, accessExp int64, refreshHash string, refreshExp, now int64) error {
+	_, err := q.q.ExecContext(ctx, `UPDATE oauth_grants SET prev_refresh_hash = refresh_hash, access_hash = ?, access_expires_at = ?, refresh_hash = ?, refresh_expires_at = ?, rotated_at = ? WHERE id = ?`,
+		accessHash, accessExp, refreshHash, refreshExp, now, id)
 	return err
 }
 
@@ -174,10 +207,13 @@ func (q *Queries) RevokeGrant(ctx context.Context, id string, now int64) error {
 	return err
 }
 
-// RevokeUserGrants disconnects every agent of a user.
-func (q *Queries) RevokeUserGrants(ctx context.Context, userID string, now int64) error {
-	_, err := q.q.ExecContext(ctx, `UPDATE oauth_grants SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL`, now, userID)
-	return err
+// RevokeUserGrants disconnects every agent of a user and reports how many were live.
+func (q *Queries) RevokeUserGrants(ctx context.Context, userID string, now int64) (int64, error) {
+	res, err := q.q.ExecContext(ctx, `UPDATE oauth_grants SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL`, now, userID)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // RevokeClientGrants revokes a user's live grants for one client (it is connecting again).
@@ -189,7 +225,7 @@ func (q *Queries) RevokeClientGrants(ctx context.Context, userID, clientID strin
 // PurgeOAuth drops expired authorization codes and registered clients that never got a
 // grant within a week (abandoned or spam registrations). Grants stay for the audit trail.
 func (q *Queries) PurgeOAuth(ctx context.Context, now int64) (int64, error) {
-	if _, err := q.q.ExecContext(ctx, `DELETE FROM oauth_codes WHERE expires_at <= ?`, now); err != nil {
+	if _, err := q.q.ExecContext(ctx, `DELETE FROM oauth_codes WHERE expires_at <= ?`, now-usedCodeKeepMs); err != nil {
 		return 0, err
 	}
 	res, err := q.q.ExecContext(ctx, `DELETE FROM oauth_clients WHERE created_at < ? AND NOT EXISTS (SELECT 1 FROM oauth_grants g WHERE g.client_id = oauth_clients.id) AND NOT EXISTS (SELECT 1 FROM oauth_codes c WHERE c.client_id = oauth_clients.id)`, now-7*24*60*60*1000)
@@ -199,14 +235,21 @@ func (q *Queries) PurgeOAuth(ctx context.Context, now int64) (int64, error) {
 	return res.RowsAffected()
 }
 
-// AgentNames maps grant ids to their client names, for the audit log.
-func (q *Queries) AgentNames(ctx context.Context) (map[string]string, error) {
-	rows, err := q.q.QueryContext(ctx, `SELECT g.id, c.name`+grantFrom)
+// AgentNames maps the given grant ids to their client names, for the audit log.
+func (q *Queries) AgentNames(ctx context.Context, ids []string) (map[string]string, error) {
+	out := map[string]string{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	rows, err := q.q.QueryContext(ctx, `SELECT g.id, c.name`+grantFrom+` WHERE g.id IN (?`+strings.Repeat(",?", len(ids)-1)+`)`, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[string]string{}
 	for rows.Next() {
 		var id, name string
 		if err := rows.Scan(&id, &name); err != nil {

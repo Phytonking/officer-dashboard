@@ -320,18 +320,22 @@ func sessionJanitor(ctx context.Context, db *store.DB, log *slog.Logger) {
 				if err == nil && n > 0 {
 					log.Info("purged expired sessions", "count", n)
 				}
-				if err != nil {
-					return err
-				}
-				// Expired OAuth codes and abandoned MCP client registrations (docs/mcp.md).
-				n, err = w.PurgeOAuth(ctx, time.Now().UnixMilli())
+				return err
+			})
+			if err != nil {
+				log.Error("session purge failed", "error", err)
+			}
+			// Expired OAuth codes and abandoned MCP client registrations (docs/mcp.md), in
+			// their own transaction so a failure here never undoes the session purge.
+			err = db.Write(ctx, func(w *store.Queries) error {
+				n, err := w.PurgeOAuth(ctx, time.Now().UnixMilli())
 				if err == nil && n > 0 {
 					log.Info("purged unused MCP clients", "count", n)
 				}
 				return err
 			})
 			if err != nil {
-				log.Error("session purge failed", "error", err)
+				log.Error("MCP OAuth purge failed", "error", err)
 			}
 		}
 	}

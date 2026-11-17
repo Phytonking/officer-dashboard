@@ -15,6 +15,10 @@ CREATE TABLE `oauth_codes` (
 	`redirect_uri` text NOT NULL,
 	`code_challenge` text NOT NULL,
 	`expires_at` integer NOT NULL,
+	-- Redeemed codes are kept (for an hour past expiry) so a replay can be told from a typo:
+	-- presenting a used code again revokes the grant it produced (RFC 6749 §4.1.2).
+	`used_at` integer,
+	`grant_id` text,
 	FOREIGN KEY (`client_id`) REFERENCES `oauth_clients`(`id`) ON UPDATE no action ON DELETE cascade,
 	FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE cascade
 );
@@ -29,6 +33,9 @@ CREATE TABLE `oauth_grants` (
 	`refresh_expires_at` integer NOT NULL,
 	-- The refresh token this one replaced: presenting it again means it leaked (RFC 9700).
 	`prev_refresh_hash` text,
+	-- When the refresh token last rotated: a replay of the previous one within a few seconds
+	-- is a concurrent refresh by the same client, not a leak.
+	`rotated_at` integer,
 	`created_at` integer NOT NULL,
 	`last_used_at` integer,
 	`revoked_at` integer,
