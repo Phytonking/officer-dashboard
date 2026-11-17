@@ -90,6 +90,8 @@ Builders read `team` entries on their own project. Mentors read `team` and `ment
 
 `POST /api/portal/builder/onboarding` does everything in one transaction. It creates the project if needed, then the person: the account's cohort, `joinedOn` = today in the club time zone, the account's email, and its **Discord ID**, so the Discord bot ingest works with no officer step. It links `member_id` when exactly one `members_mirror.uw_email` matches the account email (case-insensitive). Portal-created projects and builders get short random IDs (`lp-p-…`, `lp-b-…`) so derived calendar IDs stay within 64 characters. It then sets `person_id` and `onboarded_at` and records `buildspace_launchpad.portal.onboarded` in the audit log.
 
+A builder record may already carry the account's Discord ID (the column is unique). If that record is in an archived cohort (a returning builder), it gives up the Discord ID and a new record is created in the new cohort. If it is in the account's own cohort, not archived and has no portal account (an officer added the builder before inviting them), onboarding links the account to that record instead of creating a duplicate, applying the submitted profile and project. Any other match answers 409 and is left for an officer.
+
 ## Mentor roster and auto-assign
 
 The **Mentors** tab lists every mentor contact with these columns:

@@ -66,9 +66,23 @@ function useSignedIn() {
   return me;
 }
 
+// A failed invite sign-in comes back as /launchpad/join?error=… without the token (the server
+// only keeps its hash), so the tab remembers the token to offer "Continue" again.
+const INVITE_KEY = "launchpad-invite-token";
+function inviteToken(params: URLSearchParams): string {
+  const fromUrl = params.get("token") ?? "";
+  try {
+    if (fromUrl) sessionStorage.setItem(INVITE_KEY, fromUrl);
+    else if (params.get("error")) return sessionStorage.getItem(INVITE_KEY) ?? "";
+  } catch {
+    // Storage unavailable: fall back to the URL only.
+  }
+  return fromUrl;
+}
+
 export function JoinPage() {
   const params = new URLSearchParams(typeof location === "undefined" ? "" : location.search);
-  const token = params.get("token") ?? "";
+  const token = typeof location === "undefined" ? "" : inviteToken(params);
   const error = params.get("error");
   const [preview, setPreview] = useState<ResponseOf<"portalInvitePreview"> | null>(null);
   const [failure, setFailure] = useState("");

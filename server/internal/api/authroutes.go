@@ -94,18 +94,29 @@ func (c *Ctx) authCallback() error {
 	for _, n := range []string{oauthStateName, oauthVerifier, nextCookieName, inviteCookieName, lpInviteCookieName, lpLoginCookieName} {
 		c.S.clearCookie(c.W, c.S.hostPrefixed(n))
 	}
+	// A Launchpad sign-in that fails before Discord answers goes back to the portal page it
+	// started from, not the officer login.
+	oauthFailed := func(reason string) error {
+		switch {
+		case lpInvite != "":
+			return c.portalRedirect("/launchpad/join?error=" + reason)
+		case lpLogin:
+			return c.portalRedirect("/launchpad/login?error=" + reason)
+		}
+		return c.loginRedirect(reason)
+	}
 	if code == "" || state == "" || storedState == "" || verifier == "" || subtle.ConstantTimeCompare([]byte(state), []byte(storedState)) != 1 {
-		return c.loginRedirect("state")
+		return oauthFailed("state")
 	}
 	d := c.S.cfg.Discord
 	if d == nil {
-		return c.loginRedirect("discord")
+		return oauthFailed("discord")
 	}
 	ctx := c.Context()
 	profile, err := d.Exchange(ctx, code, verifier)
 	if err != nil {
 		c.S.log.Error("Discord OAuth failed", "error", err)
-		return c.loginRedirect("discord")
+		return oauthFailed("discord")
 	}
 	// Launchpad portal sign-ins: an invite binds first, then an explicit portal sign-in.
 	if lpInvite != "" {

@@ -260,6 +260,79 @@ func TestLaunchpadReturningBuilderMovesFromArchivedCohort(t *testing.T) {
 	}
 }
 
+// A returning builder's old record (archived cohort) still carries their Discord ID, which is
+// unique: onboarding into the new cohort takes it over instead of refusing.
+func TestLaunchpadReturningBuilderOnboardsWithSameDiscord(t *testing.T) {
+	e := discordEnv(t, `{"id":"300000000000000002","username":"returning"}`, nil)
+	e.exec(`UPDATE buildspace_launchpad_people SET discord_id='300000000000000002' WHERE id='bs-person-13'`)
+	e.exec(`INSERT INTO buildspace_launchpad_accounts(id,kind,email,name,status,cohort_id,person_id,discord_id,created_at,updated_at) VALUES('old','builder','rowan@uw.edu','Rowan','active','cohort-spring-2026','bs-person-13','300000000000000002',1,1)`)
+	token := linkInvite(t, e, "cohort-fall-2026", "rowan@uw.edu")
+	cb := oauthPortal(t, e, "launchpad="+token)
+	ck := cookieNamed(setCookies(cb), e.srv.portalCookieName())
+	if cb.Header.Get("Location") != "/launchpad" || ck == nil {
+		t.Fatalf("accept → %s", cb.Header.Get("Location"))
+	}
+	e.mustOK(e.post("/api/portal/builder/onboarding", map[string]any{"name": "Rowan Diaz", "pronouns": "", "designation": "Founder", "bio": "",
+		"project": map[string]any{"mode": "join", "projectId": "bs-sprout"}}, actor{cookie: ck}))
+	if e.scalar(`SELECT discord_id FROM buildspace_launchpad_people WHERE id='bs-person-13'`) != nil {
+		t.Fatal("old record keeps the Discord ID")
+	}
+	if e.scalar(`SELECT b.cohort_id||'|'||b.discord_id FROM buildspace_launchpad_people b JOIN buildspace_launchpad_accounts a ON a.person_id=b.id WHERE a.email='rowan@uw.edu' AND a.status='active'`) != "cohort-fall-2026|300000000000000002" {
+		t.Fatal("new record not created in the new cohort")
+	}
+}
+
+// An officer-added builder (this cohort, no portal account) links to the account on onboarding;
+// an archived one is left for an officer.
+func TestLaunchpadOnboardingLinksExistingBuilder(t *testing.T) {
+	e := newEnv(t)
+	people := func() int64 { return e.scalar(`SELECT count(*) FROM buildspace_launchpad_people`).(int64) }
+	before := people()
+	sky := e.activate("lp-invite-sky", "100000000000000002") // bs-person-02's Discord ID
+	e.mustOK(e.post("/api/portal/builder/onboarding", map[string]any{"name": "Sky Morales", "pronouns": "she/her", "designation": "Lead", "bio": "",
+		"project": map[string]any{"mode": "join", "projectId": "bs-sprout"}}, sky))
+	if e.scalar(`SELECT person_id FROM buildspace_launchpad_accounts WHERE id='lp-invite-sky'`) != "bs-person-02" || people() != before {
+		t.Fatal("did not link the existing builder record")
+	}
+	if e.scalar(`SELECT name||'|'||project_id FROM buildspace_launchpad_people WHERE id='bs-person-02'`) != "Sky Morales|bs-sprout" {
+		t.Fatal("linked record not updated from onboarding")
+	}
+	e.exec(`UPDATE buildspace_launchpad_people SET archived_at=1 WHERE id='bs-person-03'`)
+	dev := e.activate("lp-invite-dev", "100000000000000003")
+	expectStatus(t, "archived record with this Discord ID", e.post("/api/portal/builder/onboarding", map[string]any{"name": "Dev", "pronouns": "", "designation": "", "bio": "",
+		"project": map[string]any{"mode": "join", "projectId": "bs-sprout"}}, dev), 409)
+}
+
+// Reopening an accepted invite signs in through the same checks as any returning sign-in.
+func TestLaunchpadReopenedInviteRefusesArchivedBuilder(t *testing.T) {
+	e := discordEnv(t, `{"id":"300000000000000003","username":"paused"}`, nil)
+	token := linkInvite(t, e, "cohort-fall-2026", "paused@uw.edu")
+	if r := oauthPortal(t, e, "launchpad="+token); r.Header.Get("Location") != "/launchpad" {
+		t.Fatalf("accept → %s", r.Header.Get("Location"))
+	}
+	e.exec(`UPDATE buildspace_launchpad_accounts SET person_id='bs-person-02' WHERE email='paused@uw.edu'`)
+	e.exec(`UPDATE buildspace_launchpad_people SET archived_at=1 WHERE id='bs-person-02'`)
+	r := oauthPortal(t, e, "launchpad="+token)
+	if r.Header.Get("Location") != "/launchpad/login?error=archived" || cookieNamed(setCookies(r), e.srv.portalCookieName()) != nil {
+		t.Fatalf("archived reopen → %s", r.Header.Get("Location"))
+	}
+}
+
+// A portal sign-in that fails before Discord answers returns to the portal page it came from.
+func TestLaunchpadOAuthFailureStaysInPortal(t *testing.T) {
+	e := discordEnv(t, `{"id":"300000000000000004","username":"x"}`, nil)
+	for query, want := range map[string]string{"launchpad=sometoken": "/launchpad/join?error=state", "portal=1": "/launchpad/login?error=state", "next=/": "/login?error=state"} {
+		r := e.get("/auth/login?"+query, anon)
+		if r.Status != 302 {
+			t.Fatalf("%s login → %d", query, r.Status)
+		}
+		cb := e.get("/auth/callback?code=good-code&state=wrong", actor{cookies: setCookies(r)})
+		if cb.Header.Get("Location") != want {
+			t.Errorf("%s bad state → %s, want %s", query, cb.Header.Get("Location"), want)
+		}
+	}
+}
+
 func TestLaunchpadOfficerAndPortalSessionsCoexist(t *testing.T) {
 	e := discordEnv(t, `{"id":"100000000000000002","username":"priya"}`, nil) // the seeded officer
 	if r := oauthPortal(t, e, "portal=1"); r.Header.Get("Location") != "/launchpad/login?error=not_found" {

@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -141,6 +140,7 @@ func (c *Ctx) portalRedirect(target string) error {
 func (c *Ctx) portalAccept(discordID, tokenHash string) error {
 	ctx := c.Context()
 	var accountID, reason string
+	signIn := false
 	now := c.S.nowMs()
 	err := c.S.db.Write(ctx, func(q *store.Queries) error {
 		acc, err := q.LaunchpadAccountByTokenHash(ctx, tokenHash)
@@ -150,9 +150,13 @@ func (c *Ctx) portalAccept(discordID, tokenHash string) error {
 		} else if err != nil {
 			return err
 		}
-		if r := inviteRefusal(ctx, q, &acc, now); r != "" {
+		r, err := inviteRefusal(ctx, q, &acc, now)
+		if err != nil {
+			return err
+		}
+		if r != "" {
 			if r == "used" && acc.DiscordID != nil && *acc.DiscordID == discordID {
-				accountID = acc.ID // the same person opening their link again just signs in
+				signIn = true // the same person opening their link again just signs in
 				return nil
 			}
 			reason = r
@@ -200,6 +204,11 @@ func (c *Ctx) portalAccept(discordID, tokenHash string) error {
 	if reason != "" {
 		return c.portalRedirect("/launchpad/join?error=" + reason)
 	}
+	if signIn {
+		// Same checks as any returning sign-in (archived builder, disabled account).
+		_, err := c.portalSignIn(discordID)
+		return err
+	}
 	if err := c.S.createPortalSession(ctx, c.W, c.R, accountID); err != nil {
 		c.S.log.Error("create portal session failed", "error", err)
 		return c.portalRedirect("/launchpad/join?error=failed")
@@ -208,22 +217,28 @@ func (c *Ctx) portalAccept(discordID, tokenHash string) error {
 }
 
 // inviteRefusal says why an invite cannot be accepted ("" when it can).
-func inviteRefusal(ctx context.Context, q *store.Queries, a *store.LaunchpadAccount, now int64) string {
+func inviteRefusal(ctx context.Context, q *store.Queries, a *store.LaunchpadAccount, now int64) (string, error) {
 	switch a.Status {
 	case "active":
-		return "used"
+		return "used", nil
 	case "disabled":
-		return "disabled"
+		return "disabled", nil
 	}
 	if a.InviteExpiresAt == nil || *a.InviteExpiresAt <= now {
-		return "expired"
+		return "expired", nil
 	}
 	if a.CohortID != nil {
-		if co, err := q.LaunchpadCohort(ctx, *a.CohortID); err != nil || co.Status != "active" {
-			return "disabled"
+		co, err := q.LaunchpadCohort(ctx, *a.CohortID)
+		if errors.Is(err, store.ErrNotFound) {
+			return "disabled", nil
+		} else if err != nil {
+			return "", err // a real failure, not a refusal
+		}
+		if co.Status != "active" {
+			return "disabled", nil
 		}
 	}
-	return ""
+	return "", nil
 }
 
 // portalAccountFor finds the active, usable portal account of a Discord ID ("" + reason if none).
@@ -287,14 +302,18 @@ func (c *Ctx) portalInvitePreview() error {
 	q := c.S.db.Read()
 	out := map[string]any{"valid": false, "reason": "not_found", "kind": nil, "cohortName": nil, "emailHint": nil, "name": nil}
 	a, err := q.LaunchpadAccountByTokenHash(c.Context(), auth.SHA256Hex(token))
-	if err == nil && subtle.ConstantTimeCompare([]byte(*a.InviteTokenHash), []byte(auth.SHA256Hex(token))) == 1 {
+	if err == nil { // the lookup is by the token's hash, so a hit is a match
 		out["kind"], out["emailHint"], out["name"] = a.Kind, maskEmail(a.Email), a.Name
 		if a.CohortID != nil {
 			if co, err := q.LaunchpadCohort(c.Context(), *a.CohortID); err == nil {
 				out["cohortName"] = co.Name
 			}
 		}
-		if r := inviteRefusal(c.Context(), q, &a, c.S.nowMs()); r != "" {
+		r, rerr := inviteRefusal(c.Context(), q, &a, c.S.nowMs())
+		if rerr != nil {
+			return rerr
+		}
+		if r != "" {
 			out["reason"] = r
 		} else {
 			out["valid"], out["reason"] = true, nil
@@ -645,11 +664,6 @@ func (c *Ctx) portalBuilderOnboarding() error {
 			}
 			project = *p
 		}
-		for _, v := range bc.b.People {
-			if acc.DiscordID != nil && v.DiscordID != nil && *v.DiscordID == *acc.DiscordID {
-				return conflict("Your Discord account is already registered to a builder; ask an officer to link it")
-			}
-		}
 		clock, err := q.BuildspaceClock(ctx, c.S.now())
 		if err != nil {
 			return err
@@ -657,11 +671,46 @@ func (c *Ctx) portalBuilderOnboarding() error {
 		email := acc.Email
 		person := store.BuildspacePerson{ID: launchpadID("lp-b-"), Name: name, ProjectID: project.ID, JoinedOn: clock.Today, CohortID: bc.cohort.ID,
 			Designation: designation, Pronouns: pronouns, Bio: bio, Email: &email, DiscordID: acc.DiscordID}
+		// A builder record may already carry this Discord ID (discord_id is unique):
+		//   - from an archived cohort (a returning builder): that record lets go of it, as
+		//     portalAccept already moved the account on;
+		//   - added by an officer in this cohort with no portal account yet: link to it instead
+		//     of creating a duplicate.
+		// Anything else (another active cohort, an archived builder, a record that already has
+		// an account) is left for an officer.
+		var released []string
+		linked := false
+		for _, v := range bc.b.People {
+			if acc.DiscordID == nil || v.DiscordID == nil || *v.DiscordID != *acc.DiscordID {
+				continue
+			}
+			if co := bc.b.Cohort(v.CohortID); co != nil && co.Status == "archived" {
+				old := v
+				old.DiscordID = nil
+				if err := q.SaveBuildspacePerson(ctx, old); err != nil {
+					return err
+				}
+				released = append(released, v.ID)
+				continue
+			}
+			if v.CohortID == bc.cohort.ID && v.ArchivedAt == nil {
+				if _, err := q.LaunchpadAccountByPerson(ctx, v.ID); errors.Is(err, store.ErrNotFound) {
+					person.ID, person.JoinedOn, person.MemberID = v.ID, v.JoinedOn, v.MemberID
+					linked = true
+					continue
+				} else if err != nil {
+					return err
+				}
+			}
+			return conflict("Your Discord account is already registered to a builder; ask an officer to link it")
+		}
 		// Link the member record when exactly one member has this UW email.
-		if ids, err := q.MemberIDsByUWEmail(ctx, acc.Email); err != nil {
-			return err
-		} else if len(ids) == 1 {
-			person.MemberID = &ids[0]
+		if person.MemberID == nil {
+			if ids, err := q.MemberIDsByUWEmail(ctx, acc.Email); err != nil {
+				return err
+			} else if len(ids) == 1 {
+				person.MemberID = &ids[0]
+			}
 		}
 		if err := q.SaveBuildspacePerson(ctx, person); err != nil {
 			return err
@@ -671,7 +720,7 @@ func (c *Ctx) portalBuilderOnboarding() error {
 			return err
 		}
 		return c.portalAudit(ctx, q, acc.ID, "buildspace_launchpad.portal.onboarded", "buildspace_launchpad_person", person.ID, nil,
-			map[string]any{"person": person, "projectId": project.ID, "createdProject": created})
+			map[string]any{"person": person, "projectId": project.ID, "createdProject": created, "linkedExisting": linked, "releasedDiscordFrom": released})
 	})
 	if err != nil {
 		return err
@@ -705,7 +754,15 @@ func (c *Ctx) portalBuilderProfile() error {
 		if err := q.SaveBuildspacePerson(ctx, p); err != nil {
 			return err
 		}
-		acc := s.account
+		// Re-read inside the transaction: SaveLaunchpadAccount replaces the whole row, so the
+		// session's snapshot would undo a disable (or any other change) made since portal() ran.
+		acc, err := q.LaunchpadAccount(ctx, s.account.ID)
+		if err != nil {
+			return err
+		}
+		if acc.Status != "active" {
+			return fail(401, "unauthenticated", "Sign in to Launchpad first")
+		}
 		acc.Name, acc.UpdatedAt = name, c.S.nowMs()
 		if err := q.SaveLaunchpadAccount(ctx, acc); err != nil {
 			return err

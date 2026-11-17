@@ -381,7 +381,7 @@ function Dashboard({ d, reload }: { d: PortalBuilderResponse; reload: () => void
           </Card>
           {!d.readOnly && (
             <Card id="ask-h" data="ask" title="Need something or away?">
-              <p class="small muted flush">Ask the officers for help (parts, access, intros) or let them know you’ll miss a session.</p>
+              <p class="small muted flush">Ask the officers for help (parts, access, intros) or let them know you’ll miss a session. Your team and mentors see these too.</p>
               <EntryForm kind="request" today={d.schedule.today} done={(m) => { setNotice(m); reload(); }} />
             </Card>
           )}
@@ -413,7 +413,7 @@ function EntryForm({ kind: initial, today, done }: { kind: "weekly" | "request";
         try {
           await api("portalBuilderActivity", { body: { kind, date: String(f.get("date")), body: String(f.get("body")), status: kind === "weekly" ? status : kind === "absence" ? "on-track" : "open" } });
           form.reset();
-          done(kind === "weekly" ? "Check-in posted. Your team and mentors can see it." : kind === "absence" ? "Absence noted. Thanks for the heads-up." : "Request sent to the officers.");
+          done(kind === "weekly" ? "Check-in posted. Your team and mentors can see it." : kind === "absence" ? "Absence noted. Thanks for the heads-up." : "Request sent. Officers, your team and your mentors can see it.");
         } catch (err) {
           setError(errorMessage(err));
         } finally {

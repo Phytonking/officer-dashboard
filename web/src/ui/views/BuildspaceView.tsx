@@ -93,10 +93,7 @@ export default function BuildspaceView({ me }: { me: CurrentUser }) {
       <Async state={state}>
         {(b) => (
           b.cohortId === null ? (
-            <Empty
-              title="No cohort yet"
-              action={canDirector ? undefined : undefined}
-            >
+            <Empty title="No cohort yet">
               {canDirector
                 ? "Create the first cohort with New cohort above, then invite builders to it."
                 : "A director creates cohorts. Ask one to set up the first cohort."}
