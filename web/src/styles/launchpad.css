@@ -1,0 +1,55 @@
+/* Launchpad cohorts, invites, mentor roster and lifecycle on the officer page
+   (docs/launchpad-cohorts.md). Built from the existing tokens; no new colours. */
+
+.lp-cohort-bar {display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0;}
+.lp-cohort-select .select {width: auto; min-width: 180px; max-width: 100%; font-weight: 600;}
+.lp-cohort-dates {font-size: 12px;}
+
+/* Archived and unavailable rows stay readable but step back. */
+.bs-table tr.lp-muted-row > td {color: var(--muted);}
+.bs-table tr.lp-muted-row .bs-title {color: var(--muted);}
+.bs-table td .badge {margin-top: 4px;}
+
+.lp-archived-toggle {display: flex !important; align-items: center; gap: 8px; align-self: end; min-height: 36px; font-size: 12px; cursor: pointer;}
+.lp-archived-toggle input, .lp-switch input {width: 16px; height: 16px; accent-color: var(--accent); margin: 0;}
+
+.lp-account-chip {display: block; margin-top: 4px;}
+.lp-switch {display: inline-flex; align-items: center; gap: 8px; cursor: pointer;}
+.lp-cap {width: 76px; min-height: 30px; padding: 3px 8px; font-variant-numeric: tabular-nums;}
+.lp-copy {display: block; margin-top: 4px; font-size: 12px;}
+
+.lp-visibility {font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: var(--radius-control, 4px); padding: 1px 6px; white-space: nowrap;}
+.lp-visibility[data-visibility="team"] {border-color: color-mix(in srgb, var(--c-green) 45%, var(--line));}
+.lp-visibility[data-visibility="mentors"] {border-color: color-mix(in srgb, var(--c-violet) 45%, var(--line));}
+
+/* Invite dialog preview and link lists. */
+.lp-invite-preview {display: grid; gap: 8px; min-width: 0;}
+.lp-invite-preview > p {margin: 0;}
+.lp-invite-rows {list-style: none; margin: 0; padding: 0; display: grid; border: 1px solid var(--line); border-radius: var(--radius); max-height: 260px; overflow: auto; overscroll-behavior: contain;}
+.lp-invite-rows > li {display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 12px; border-top: 1px solid var(--line); font-size: 13px; min-width: 0;}
+.lp-invite-rows > li:first-child {border-top: 0;}
+.lp-invite-rows > li.is-skipped {color: var(--muted);}
+.lp-invite-email {font-weight: 600; overflow-wrap: anywhere; min-width: 0;}
+.lp-invite-state {margin-left: auto; font-size: 12px; color: var(--muted);}
+.lp-invite-rows > li.is-skipped .lp-invite-email {font-weight: 400; text-decoration: line-through; text-decoration-color: var(--line);}
+.lp-link {font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; word-break: break-all; padding: 4px 8px; background: var(--sunken); border-radius: var(--radius); flex: 1 1 240px; min-width: 0;}
+
+/* Member search picker in the builder form. */
+.lp-member-picker {position: relative; display: grid; gap: 7px; font-size: 12px;}
+.lp-member-picker > label {display: grid; gap: 7px;}
+.lp-picked {display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--sunken);}
+.lp-picked > span {display: grid; gap: 2px; min-width: 0;}
+.lp-picked strong {font-size: 13px; overflow-wrap: anywhere;}
+.lp-picker-list {list-style: none; margin: 0; padding: 4px; border: 1px solid var(--control); border-radius: var(--radius-overlay, 6px); background: var(--surface); box-shadow: var(--block-lift, 0 18px 40px -18px rgb(0 0 0 / .32), 0 2px 6px rgb(0 0 0 / .08)); display: grid; animation: pop-in var(--dur-2, 160ms) var(--ease-out, ease-out) backwards;}
+.lp-picker-list > li {display: grid; gap: 2px; padding: 8px 10px; border-radius: var(--radius); cursor: pointer;}
+.lp-picker-list > li[aria-selected="true"], .lp-picker-list > li:hover {background: var(--hover);}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-picker-list {animation: none;}
+}
+@media (max-width: 640px) {
+  .lp-cohort-bar {width: 100%;}
+  .lp-cohort-select {flex: 1 1 auto;}
+  .lp-cohort-select .select {width: 100%;}
+  .lp-invite-state {margin-left: 0; flex-basis: 100%;}
+}

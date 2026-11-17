@@ -13,8 +13,10 @@ import { href } from "../../../lib/routes";
 import { fmtDate, fmtShort } from "../../../lib/format";
 import { Badge } from "../../components/kit";
 import { Empty, errorMessage, Notice } from "../../components/states";
+import type { LifecycleAction } from "./lifecycle";
 import {
   kindLabel,
+  VISIBILITY_LABEL,
   missed,
   openActivity,
   projectMentors,
@@ -27,6 +29,8 @@ export function BuildspaceDetail({
   reload,
   onPerson,
   section,
+  lifecycle = [],
+  readOnly = false,
 }: {
   b: BuildspaceData;
   person?: BuildspacePerson;
@@ -34,6 +38,10 @@ export function BuildspaceDetail({
   reload: () => void;
   onPerson: (id: string) => void;
   section?: string;
+  /** Archive / restore / delete for this project (drawer header). */
+  lifecycle?: LifecycleAction[];
+  /** The cohort is archived: no edits, no new entries. */
+  readOnly?: boolean;
 }) {
   const [localTab, setTab] = useState("overview"),
     [error, setError] = useState(""),
@@ -62,6 +70,8 @@ export function BuildspaceDetail({
   const [builderId, setBuilderId] = useState(person?.id || "");
   const [entryStatus, setEntryStatus] =
     useState<BuildspaceActivity["status"]>("on-track");
+  const [visibility, setVisibility] =
+    useState<BuildspaceActivity["visibility"]>("officers");
   const resolve = async (a: BuildspaceActivity) => {
     setBusy(true);
     setError("");
@@ -84,13 +94,36 @@ export function BuildspaceDetail({
         <Badge tone={project.stage === "At risk" ? "attention" : "neutral"}>
           {project.stage}
         </Badge>
-        <button
-          class="btn"
-          onClick={() => pushEntry({ edit: person ? "person" : "project" })}
-        >
-          Edit {person ? "builder" : "project"}
-        </button>
+        {(project.archivedAt !== null || (person && person.archivedAt !== null)) && (
+          <Badge tone="neutral">Archived</Badge>
+        )}
+        <span class="action-row">
+          {!readOnly && !(person ? person.archivedAt : project.archivedAt) && (
+            <button
+              class="btn"
+              onClick={() => pushEntry({ edit: person ? "person" : "project" })}
+            >
+              Edit {person ? "builder" : "project"}
+            </button>
+          )}
+          {lifecycle.map((l) => (
+            <button
+              key={l.data}
+              type="button"
+              class={`btn${l.danger ? " btn--danger" : ""}`}
+              data-lifecycle={l.data}
+              disabled={l.disabled}
+              title={l.reason}
+              onClick={l.run}
+            >
+              {l.label}
+            </button>
+          ))}
+        </span>
       </div>}
+      {!section && lifecycle.some((l) => l.disabled && l.reason) && (
+        <p class="bs-muted small">{lifecycle.find((l) => l.disabled && l.reason)!.reason}</p>
+      )}
       {person && !section && (
         <p>
           Building{" "}
@@ -233,6 +266,7 @@ export function BuildspaceDetail({
                       f.get("status"),
                     ) as BuildspaceActivity["status"],
                     purchaseId: String(f.get("purchaseId") || "") || null,
+                    visibility,
                   },
                 });
                 form.reset();
@@ -347,6 +381,23 @@ export function BuildspaceDetail({
                 <option value="resolved">Resolved</option>
               </select>
             </label>
+            <label>
+              Who can see this
+              <select
+                class="select"
+                aria-label="Who can see this"
+                name="visibility"
+                data-visibility
+                value={visibility}
+                onChange={(e) =>
+                  setVisibility(e.currentTarget.value as typeof visibility)
+                }
+              >
+                <option value="officers">{VISIBILITY_LABEL.officers}</option>
+                <option value="mentors">{VISIBILITY_LABEL.mentors}</option>
+                <option value="team">{VISIBILITY_LABEL.team}</option>
+              </select>
+            </label>
             {kind === "purchase" && (
               <>
                 <label>
@@ -361,7 +412,7 @@ export function BuildspaceDetail({
                 </p>
               </>
             )}
-            <button class="btn btn--primary" disabled={busy}>
+            <button class="btn btn--primary" disabled={busy || readOnly}>
               {busy ? "Saving…" : "Add entry"}
             </button>
           </form>
@@ -402,7 +453,10 @@ export function BuildspaceDetail({
                       : a.personId ? (b.people.find((p) => p.id === a.personId)?.name || "Former builder") : "Whole project"}
                     {a.mentorId &&
                       ` · ${mentors.find((m) => m.id === a.mentorId)?.name || "Former mentor"}`}{" "}
-                    · {a.source === "discord" ? "Discord" : "Manual"}
+                    · {a.source === "discord" ? "Discord" : a.authorName ? `by ${a.authorName}` : "Manual"}
+                  </span>
+                  <span class="lp-visibility" data-visibility={a.visibility} title="Who can see this entry outside the officer dashboard">
+                    {VISIBILITY_LABEL[a.visibility]}
                   </span>
                 </div>
                 {a.purchaseId ? (

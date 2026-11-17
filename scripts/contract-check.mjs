@@ -559,6 +559,88 @@ must(bsSchedule.json.pending?.dueWeekday === 3 && bsSchedule.json.pending.effect
 const bsReverted = await call('buildspaceSchedulePut', {who: leadership, body: {dueWeekday: bsSchedule.json.current.dueWeekday, dueTime: bsSchedule.json.current.dueTime}});
 must(bsReverted.json.pending === null, 'Choosing the current due day cancels a pending change');
 
+// Launchpad cohorts, invites, roster, auto-assign, archive and the builder/mentor portal
+// (docs/launchpad-cohorts.md). Portal sessions use their own table and cookie.
+function portalSessionFor(accountId) {
+  const token = randomBytes(32).toString('base64url');
+  const id = createHash('sha256').update(token).digest('hex');
+  db.prepare('INSERT INTO buildspace_launchpad_sessions (id, account_id, expires_at, created_at, user_agent) VALUES (?, ?, ?, ?, ?)').run(id, accountId, Date.now() + 864e5, Date.now(), 'contract-check');
+  return { cookie: `cseed_launchpad=${token}` };
+}
+const lpList = await call('buildspaceList', {who: officer, query: {cohort: 'cohort-fall-2026', archived: '1'}});
+must(lpList.json.cohortId === 'cohort-fall-2026' && lpList.json.cohorts.length >= 2, 'register is scoped to a cohort');
+await call('buildspaceList', {who: officer, query: {cohort: 'missing'}, expect: 404});
+await call('launchpadCohortCreate', {who: officer, body: {name: 'Contract cohort', startsOn: '2027-01-04'}, expect: 403});
+const lpCohort = await call('launchpadCohortCreate', {who: directorA, body: {name: 'Contract cohort', startsOn: '2027-01-04', endsOn: '2027-03-19'}});
+const lpCohortId = lpCohort.json.cohort.id;
+await call('launchpadCohortCreate', {who: directorA, body: {name: 'Contract cohort', startsOn: '2027-01-04'}, expect: 409});
+await call('launchpadCohortUpdate', {who: directorA, params: {id: lpCohortId}, body: {name: 'Contract cohort (winter)', endsOn: null}});
+const lpInvites = await call('launchpadInvite', {who: officer, params: {id: lpCohortId}, body: {invites: [{email: 'one@uw.edu', name: 'One'}, {email: 'ONE@uw.edu'}, {email: 'two@uw.edu'}], method: 'link'}});
+must(lpInvites.json.accounts.length === 2 && lpInvites.json.links.length === 2 && lpInvites.json.skipped[0]?.reason === 'duplicate', 'bulk invites dedupe and return links');
+const lpTwo = lpInvites.json.accounts.find(a => a.email === 'two@uw.edu');
+await call('launchpadInvite', {who: officer, params: {id: lpCohortId}, body: {invites: [{email: 'bad'}]}, expect: 400});
+const lpToken = new URL(lpInvites.json.links[0].url).searchParams.get('token');
+const lpPreview = await call('portalInvitePreview', {query: {token: lpToken}});
+must(lpPreview.json.valid === true && lpPreview.json.cohortName === 'Contract cohort (winter)', 'invite preview');
+const lpSeeded = await call('portalInvitePreview', {query: {token: 'demo-launchpad-invite-sky'}});
+must(lpSeeded.json.valid === true && lpSeeded.json.kind === 'builder', 'seeded demo invite is valid');
+await call('portalInvitePreview', {query: {token: 'no-such-token'}});
+await call('launchpadAccountResend', {who: officer, params: {id: lpTwo.id}});
+await call('launchpadAccountDisable', {who: officer, params: {id: lpTwo.id}, expect: 403});
+await call('launchpadAccountDisable', {who: directorA, params: {id: lpTwo.id}});
+await call('launchpadAccountEnable', {who: directorA, params: {id: lpTwo.id}});
+await call('launchpadAccountRevoke', {who: officer, params: {id: lpTwo.id}});
+await call('launchpadCohortDelete', {who: directorA, params: {id: lpCohortId}, expect: 409});
+const lpOne = lpInvites.json.accounts.find(a => a.email === 'one@uw.edu');
+await call('launchpadAccountRevoke', {who: officer, params: {id: lpOne.id}});
+await call('launchpadCohortDelete', {who: directorA, params: {id: lpCohortId}});
+const lpMentorInvite = await call('launchpadMentorInvite', {who: directorA, params: {contactId: 'bs-mentor-jordan'}, body: {method: 'both'}});
+must(lpMentorInvite.json.link && lpMentorInvite.json.account.kind === 'mentor', 'mentor invite');
+await call('launchpadMentorInvite', {who: officer, params: {contactId: 'bs-mentor-amara'}, body: {}, expect: 403});
+await call('launchpadMentorSettings', {who: officer, params: {contactId: 'bs-mentor-amara'}, body: {available: true, maxProjects: null}});
+await call('launchpadMentorSettings', {who: officer, params: {contactId: 'bs-mentor-maya'}, body: {available: true, maxProjects: 0}, expect: 400});
+const lpPlan = await call('launchpadAutoAssignPreview', {who: officer, params: {id: 'cohort-fall-2026'}});
+must(lpPlan.json.assignments.length >= 1, 'an unmentored project gets a proposed mentor');
+await call('launchpadAutoAssign', {who: officer, params: {id: 'cohort-fall-2026'}, body: {assignments: lpPlan.json.assignments}});
+await call('launchpadAutoAssign', {who: officer, params: {id: 'cohort-fall-2026'}, body: {assignments: lpPlan.json.assignments}, expect: 409});
+await call('buildspaceProjectSave', {who: officer, params: {id: 'contract-empty'}, body: {name: 'Empty', description: '', track: 'Creative', stage: 'Ideating', links: [], mentorIds: [], cohortId: 'cohort-fall-2026'}});
+await call('launchpadProjectArchive', {who: officer, params: {id: 'contract-empty'}});
+await call('launchpadProjectRestore', {who: officer, params: {id: 'contract-empty'}});
+await call('launchpadProjectDelete', {who: officer, params: {id: 'contract-empty'}, expect: 403});
+await call('launchpadProjectDelete', {who: directorA, params: {id: 'contract-empty'}});
+await call('buildspacePersonSave', {who: officer, params: {id: 'contract-temp'}, body: {name: 'Temp', projectId: 'bs-common', joinedOn: today, designation: 'Founder', pronouns: '', bio: '', email: 'temp@uw.edu'}});
+await call('launchpadPersonArchive', {who: officer, params: {id: 'contract-temp'}});
+await call('launchpadPersonRestore', {who: officer, params: {id: 'contract-temp'}});
+await call('launchpadPersonDelete', {who: directorA, params: {id: 'contract-temp'}});
+await call('launchpadPersonDelete', {who: directorA, params: {id: 'bs-person-02'}, expect: 409});
+
+const lpBuilder = portalSessionFor('lp-account-alex');
+const lpMentor = portalSessionFor('lp-account-maya');
+await call('portalMe', {expect: 401});
+await call('portalMe', {who: officer, expect: 401});
+const lpMe = await call('portalMe', {who: lpBuilder});
+must(lpMe.json.account.kind === 'builder' && lpMe.json.account.onboarded, 'seeded builder is onboarded');
+await call('buildspaceList', {who: lpBuilder, expect: 401});
+const lpDash = await call('portalBuilder', {who: lpBuilder});
+must(lpDash.json.project?.id === 'bs-moss' && lpDash.json.activity.every(a => a.visibility === 'team'), 'builders see their project and team entries only');
+await call('portalBuilderProfile', {who: lpBuilder, body: {name: 'Alex Kim', pronouns: 'they/them', designation: 'Founder', bio: 'Calmer study tools.'}});
+await call('portalBuilderProject', {who: lpBuilder, body: {name: 'Moss', description: lpDash.json.project.description, track: 'Software', stage: 'Building', links: lpDash.json.project.links}});
+await call('portalBuilderActivity', {who: lpBuilder, body: {kind: 'weekly', date: today, body: 'Contract check-in', status: 'on-track'}});
+await call('portalBuilderOnboarding', {who: lpBuilder, body: {name: 'A', pronouns: '', designation: '', bio: '', project: {mode: 'join', projectId: 'bs-moss'}}, expect: 409});
+await call('portalMentor', {who: lpBuilder, expect: 403});
+const lpMentorDash = await call('portalMentor', {who: lpMentor});
+must(lpMentorDash.json.projects.some(p => p.id === 'bs-moss'), 'mentor sees assigned projects');
+await call('portalMentorActivity', {who: lpMentor, body: {projectId: 'bs-moss', personId: 'bs-person-01', date: today, body: 'Nice progress', status: 'on-track', visibility: 'team'}});
+await call('portalMentorActivity', {who: lpMentor, body: {projectId: 'bs-afterimage', date: today, body: 'x', status: 'on-track', visibility: 'team'}, expect: 404});
+// A fresh builder onboards by joining a project.
+db.prepare("UPDATE buildspace_launchpad_accounts SET status='active', discord_id='300000000000000099', accepted_at=1 WHERE id='lp-invite-dev'").run();
+const lpNew = portalSessionFor('lp-invite-dev');
+const lpNewDash = await call('portalBuilder', {who: lpNew});
+must(!lpNewDash.json.onboarded && lpNewDash.json.joinable.length > 0, 'not yet onboarded builders can pick a project');
+await call('portalBuilderOnboarding', {who: lpNew, body: {name: 'Dev Patel', pronouns: 'he/him', designation: 'Design lead', bio: '', project: {mode: 'new', name: 'Contract new project', description: 'Idea', track: 'Creative', links: []}}});
+await call('portalLogout', {who: lpNew});
+await call('portalBuilder', {who: lpNew, expect: 401});
+
 // Buildspace + Launchpad calendar sources are opt-in and use the same registry/settings contract.
 const purchaseFeed = await call('calendarFeed', {who: officer, query: {start: '2026-11-01', end: '2026-12-01', sources: 'purchase-deadlines'}});
 must(purchaseFeed.json.items.some(i => i.source === 'purchase-deadlines' && i.detail), 'purchase deadlines carry an amount/status detail');

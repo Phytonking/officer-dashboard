@@ -52,10 +52,10 @@ All values default to unset unless specified. Source: `server/cmd/dashboard/main
 | --- | --- |
 | `GOOGLE_DRIVE_FOLDER_ID` | Legacy receipt-root alias; `DRIVE_ROOT_FOLDER_ID` takes precedence. |
 | `DISCORD_BOT_TOKEN` | Bot token for invitation DMs; separate from OAuth and webhook credentials. |
-| `SMTP_HOST` | SMTP server for calendar email delivery. |
+| `SMTP_HOST` | SMTP server for calendar email delivery and Launchpad builder/mentor invites. Without it, invites return copyable links. |
 | `SMTP_PORT` | SMTP port, default `587`. |
 | `SMTP_USERNAME`, `SMTP_PASSWORD` | SMTP authentication credentials. |
-| `SMTP_FROM` | Calendar invitation sender. |
+| `SMTP_FROM` | Sender of calendar invitations and Launchpad invites. |
 | `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` | Per-officer Calendar OAuth; callback `${APP_URL}/auth/google/callback`. Separate from the Drive service account. |
 | `CLOUDFLARE_API_TOKEN` | Cloudflare API bearer token. |
 | `CLOUDFLARE_ACCOUNT_ID` | Account for D1 and GraphQL analytics. |

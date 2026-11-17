@@ -216,6 +216,9 @@ func onboardingOpenPath(method, p string) bool {
 	switch {
 	case p == "/api/me", strings.HasPrefix(p, "/api/me/"), p == "/api/health":
 		return true
+	case p == "/api/portal", strings.HasPrefix(p, "/api/portal/"):
+		// Portal handlers never consult the officer identity.
+		return true
 	case p == "/api/club/settings":
 		return method == http.MethodGet || method == http.MethodHead
 	}

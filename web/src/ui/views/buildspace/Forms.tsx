@@ -1,4 +1,4 @@
-import { useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import {
   BUILDSPACE_STAGES,
   BUILDSPACE_TRACKS,
@@ -6,7 +6,8 @@ import {
   type BuildspacePerson,
   type BuildspaceProject,
 } from "../../../lib/contracts";
-import { api } from "../../../lib/api/client";
+import { api, fieldErrors } from "../../../lib/api/client";
+import type { Member } from "../../../lib/contracts";
 import { errorMessage, Notice } from "../../components/states";
 export function ProjectForm({
   b,
@@ -42,6 +43,8 @@ export function ProjectForm({
                 .map((s) => s.trim())
                 .filter(Boolean),
               mentorIds: f.getAll("mentors").map(String),
+              // A project's cohort is fixed at creation; the server ignores it on update.
+              ...(project ? {} : { cohortId: b.cohortId ?? undefined }),
             },
           });
           saved();
@@ -112,6 +115,8 @@ export function ProjectForm({
                 defaultChecked={project?.mentorIds.includes(m.id)}
               />
               {m.name} · {m.org}
+              {!m.available && <span class="bs-muted"> · unavailable</span>}
+              {m.maxProjects !== null && <span class="bs-muted"> · {m.load}/{m.maxProjects} projects</span>}
             </label>
           ))
         ) : (
@@ -149,6 +154,8 @@ export function PersonForm({
   const [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
   const [projectId, setProjectId] = useState(person?.projectId || "");
+  const [fields, setFields] = useState<Record<string, string>>({});
+  const projects = b.projects.filter((p) => !p.archivedAt || p.id === person?.projectId);
   return (
     <form
       class="bs-form motion-list"
@@ -158,18 +165,24 @@ export function PersonForm({
         setBusy(true);
         setError("");
         try {
+          setFields({});
           await api("buildspacePersonSave", {
             params: { id: person?.id || crypto.randomUUID() },
             body: {
               name: String(f.get("name")),
               projectId: String(f.get("projectId")),
               joinedOn: String(f.get("joinedOn")),
-              memberId: String(f.get("memberId")) || null,
+              memberId: String(f.get("memberId") || "") || null,
               discordId: String(f.get("discordId")) || null,
+              designation: String(f.get("designation") || ""),
+              pronouns: String(f.get("pronouns") || ""),
+              bio: String(f.get("bio") || ""),
+              email: String(f.get("email") || "").trim() || null,
             },
           });
           saved();
         } catch (err) {
+          setFields(fieldErrors(err));
           setError(errorMessage(err));
         } finally {
           setBusy(false);
@@ -199,7 +212,7 @@ export function PersonForm({
           <option value="" disabled>
             Choose a project
           </option>
-          {b.projects.map((p) => (
+          {projects.map((p) => (
             <option value={p.id}>{p.name}</option>
           ))}
         </select>
@@ -215,14 +228,35 @@ export function PersonForm({
         />
       </label>
       <label>
-        Member record ID · optional
+        Designation · optional
         <input
           class="input"
-          name="memberId"
-          maxLength={64}
-          defaultValue={person?.memberId || ""}
+          name="designation"
+          maxLength={80}
+          placeholder="Hardware lead, Designer, Founder…"
+          defaultValue={person?.designation || ""}
         />
       </label>
+      <label>
+        Pronouns · optional
+        <input class="input" name="pronouns" maxLength={40} defaultValue={person?.pronouns || ""} />
+      </label>
+      <label>
+        Email · optional
+        <input
+          class="input"
+          type="email"
+          name="email"
+          maxLength={254}
+          aria-invalid={fields.email ? true : undefined}
+          defaultValue={person?.email || ""}
+        />
+      </label>
+      <label>
+        Short bio · optional
+        <textarea class="textarea" name="bio" rows={3} maxLength={500} defaultValue={person?.bio || ""} />
+      </label>
+      <MemberPicker initial={person?.memberId ?? null} />
       <label>
         Discord user ID · optional
         <input
@@ -234,9 +268,122 @@ export function PersonForm({
         />
       </label>
       {error && <Notice tone="negative">{error}</Notice>}
-      <button class="btn btn--primary" disabled={busy || !b.projects.length}>
+      <button class="btn btn--primary" disabled={busy || !projects.length}>
         {busy ? "Saving…" : "Save builder"}
       </button>
     </form>
+  );
+}
+
+const memberName = (m: Member) => `${m.preferred_name || m.first_name} ${m.last_name}`.trim();
+
+/**
+ * Links a builder to their Members record by searching the mirror (name or email) instead of
+ * typing an ID. Builders who onboard through the portal are linked by email automatically.
+ * Submits as the `memberId` form field; Clear unlinks.
+ */
+export function MemberPicker({ initial }: { initial: string | null }) {
+  const [id, setId] = useState<string | null>(initial);
+  const [label, setLabel] = useState<string>(initial ? "Linked member record" : "");
+  const [q, setQ] = useState("");
+  const [results, setResults] = useState<Member[] | null>(null);
+  const [error, setError] = useState("");
+  const [active, setActive] = useState(0);
+  const listId = useRef(`member-picker-${Math.random().toString(36).slice(2)}`).current;
+  useEffect(() => {
+    if (!initial) return;
+    const ctrl = new AbortController();
+    api("memberDetail", { params: { id: initial }, signal: ctrl.signal })
+      .then((r) => setLabel(`${memberName(r.member)}${r.member.uw_email ? ` · ${r.member.uw_email}` : ""}`))
+      .catch(() => setLabel(`Member ${initial}`));
+    return () => ctrl.abort();
+  }, [initial]);
+  useEffect(() => {
+    const term = q.trim();
+    if (term.length < 2) {
+      setResults(null);
+      return;
+    }
+    const ctrl = new AbortController();
+    const t = setTimeout(() => {
+      api("membersList", { query: { q: term, limit: 8 }, signal: ctrl.signal })
+        .then((r) => {
+          setResults(r.items);
+          setActive(0);
+          setError(r.connected ? "" : "The Members mirror isn't connected, so there is nothing to search yet.");
+        })
+        .catch((e) => !ctrl.signal.aborted && setError(errorMessage(e)));
+    }, 200);
+    return () => {
+      clearTimeout(t);
+      ctrl.abort();
+    };
+  }, [q]);
+  const pick = (m: Member) => {
+    setId(m.person_id);
+    setLabel(`${memberName(m)}${m.uw_email ? ` · ${m.uw_email}` : ""}`);
+    setQ("");
+    setResults(null);
+  };
+  return (
+    <div class="lp-member-picker" data-member-picker>
+      <input type="hidden" name="memberId" value={id ?? ""} />
+      {id ? (
+        <div class="lp-picked">
+          <span>
+            <span class="field-label">Member record</span>
+            <strong>{label}</strong>
+          </span>
+          <button type="button" class="btn btn--small" onClick={() => { setId(null); setLabel(""); }}>
+            Clear
+          </button>
+        </div>
+      ) : (
+        <label>
+          Member record · optional
+          <input
+            class="input"
+            type="search"
+            role="combobox"
+            list={undefined}
+            aria-expanded={!!results?.length}
+            aria-controls={listId}
+            aria-autocomplete="list"
+            aria-activedescendant={results?.length ? `${listId}-${active}` : undefined}
+            placeholder="Search members by name or email"
+            value={q}
+            onInput={(e) => setQ(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (!results?.length) return;
+              if (e.key === "ArrowDown") { e.preventDefault(); setActive((a) => Math.min(a + 1, results.length - 1)); }
+              else if (e.key === "ArrowUp") { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)); }
+              else if (e.key === "Enter") { e.preventDefault(); pick(results[active]!); }
+              else if (e.key === "Escape") setResults(null);
+            }}
+          />
+        </label>
+      )}
+      {!id && results && (
+        <ul class="lp-picker-list" role="listbox" id={listId}>
+          {results.length ? (
+            results.map((m, i) => (
+              <li
+                key={m.person_id}
+                id={`${listId}-${i}`}
+                role="option"
+                aria-selected={i === active}
+                onMouseDown={(e) => { e.preventDefault(); pick(m); }}
+              >
+                <strong>{memberName(m)}</strong>
+                <span class="bs-muted">{[m.uw_email, m.major, m.grad_year].filter(Boolean).join(" · ")}</span>
+              </li>
+            ))
+          ) : (
+            <li class="bs-muted" role="option" aria-disabled="true" aria-selected={false}>No members match.</li>
+          )}
+        </ul>
+      )}
+      {error && <p class="field-hint">{error}</p>}
+    </div>
   );
 }

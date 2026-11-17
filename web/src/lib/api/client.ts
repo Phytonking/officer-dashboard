@@ -188,9 +188,13 @@ export async function api<N extends EndpointName>(name: N, opts: CallOptions<N> 
     if ((e as Error).name === 'AbortError') throw e;
     throw new ApiCallError(0, 'internal', 'Could not reach the server. Check your connection and try again.');
   }
-  notePermissions(name, res);
+  // Builder/mentor portal calls (/api/portal) ride their own session: they never touch the
+  // officer sign-in, permission version or setup redirects; the portal pages handle 401 themselves.
+  const portal = spec.path.startsWith('/api/portal');
+  if (!portal) notePermissions(name, res);
   if (!res.ok) {
     let err = await toApiError(res);
+    if (portal) throw err;
     if (res.status === 401) redirectToLogin();
     if (res.status === 403 && err.code !== 'onboarding_required') {
       // A refusal may mean this tab is out of date: say so plainly, and recheck /api/me.

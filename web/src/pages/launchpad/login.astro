@@ -1,0 +1,7 @@
+---
+import PortalLayout from '../../layouts/PortalLayout.astro';
+import { LoginPage } from '../../ui/portal/Join';
+---
+<PortalLayout title="Sign in" narrow>
+  <LoginPage client:only="preact" />
+</PortalLayout>

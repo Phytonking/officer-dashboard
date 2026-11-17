@@ -1,0 +1,44 @@
+---
+/**
+ * The Launchpad portal shell for builders and mentors (docs/launchpad-cohorts.md): the same
+ * tokens, components and theme as the officer dashboard, but no officer sidebar, search or
+ * early officer reads. Portal pages never call officer APIs.
+ */
+import '../styles/tokens.css';
+import '../styles/base.css';
+import '../styles/components.css';
+import '../styles/v03.css';
+import '../styles/buildspace.css';
+import '../styles/portal.css';
+
+interface Props {
+  title: string;
+  /** Centred card pages (join, sign-in). */
+  narrow?: boolean;
+}
+const { title, narrow = false } = Astro.props;
+// Theme before first paint, from the same preference the dashboard stores.
+const PREPAINT = `(function(){var d=document.documentElement,t;try{t=localStorage.getItem('cseed-theme')}catch(e){}t=t==='dark'||t==='system'?t:'light';var k=t==='dark'||(t==='system'&&matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';d.dataset.themePref=t;d.dataset.theme=k;d.style.colorScheme=k;d.dataset.density='comfortable'})();`;
+---
+
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="CSEED Launchpad: your project, team, mentors and weekly check-ins." />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="referrer" content="no-referrer" />
+    <title>{title} · CSEED Launchpad</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon.ico" sizes="32x32" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <script is:inline set:html={PREPAINT} />
+  </head>
+  <body class:list={['portal', { 'is-bare': narrow }]}>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <main id="main" class:list={[narrow ? 'bare-main' : 'portal-main']} tabindex="-1">
+      <slot />
+    </main>
+  </body>
+</html>

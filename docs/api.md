@@ -39,6 +39,7 @@ and response is a zod schema there with its TypeScript type inferred under the s
 | officer | Any signed-in, active officer, director, or leadership user. |
 | director | Director or leadership; officers get 403. `/api/admin/*` is enforced by the middleware, the rest by `requireRole(locals, 'director')` in the handler. |
 | token:&lt;scope&gt; | `Authorization: Bearer <service token>` with that scope (issued on `/officers?tab=tokens`). No session. |
+| portal / portal:builder / portal:mentor | A Launchpad portal session (`cseed_launchpad` cookie, `__Host-` over HTTPS) for any, a builder, or a mentor account. Never an officer session: officer cookies get 401 here, and portal cookies get 401 on every officer endpoint. |
 
 ## Endpoints
 
@@ -634,3 +635,18 @@ Automatic mode detects the browser zone on load, focus, and visibility return, p
 ### Buildspace + Launchpad compatibility
 
 Canonical endpoints use `/api/buildspace-launchpad` and `/api/ingest/buildspace-launchpad`. Old paths remain aliases with identical authorization and bodies. `/buildspace` redirects permanently (301) to `/buildspace-launchpad`, preserving query parameters.
+
+### Launchpad cohorts and portal (V0.12)
+
+Design, lifecycle rules and the security model: [launchpad-cohorts.md](launchpad-cohorts.md). Contracts: `Launchpad*` and `Portal*` in `src/core/contracts.ts`. The new officer routes exist only under `/api/buildspace-launchpad` (no legacy alias).
+
+- `GET /api/buildspace-launchpad?cohort=<id>&archived=1`: the register for one cohort (default: newest active by start date), plus `cohorts` (newest first, with counts), `cohortId`, that cohort's builder `accounts`, and the club-wide mentor roster (`email`, `available`, `maxProjects`, `load`, `account`). Unknown cohort 404; `archived` other than `0`/`1` is a 400.
+- `PUT /projects/:id`: `cohortId` picks the cohort when creating (an archived cohort is 409; older clients that omit it get the newest active cohort; 400 when none exists). Ignored on update. `PUT /people/:id` also takes `designation`, `pronouns`, `bio` and `email`; omitted fields keep their stored values. A builder cannot move between cohorts (409). `POST /activity` takes `visibility` (`team` | `mentors` | `officers`, default `officers`); Discord ingest writes `team`.
+- Writes to an archived project, builder or cohort return 409 (restore first). Ingest for an archived builder, project or cohort returns 400.
+- Cohorts (director): `POST /cohorts`, `PATCH /cohorts/:id` (partial; `status` archives/restores), `DELETE /cohorts/:id` (only when nothing references it, else 409). Duplicate names (case-insensitive) are 409.
+- Invites (officer): `POST /cohorts/:id/invites` with `{invites: [{email, name?}] (1–200), method}`. Emails are lowercased. Duplicates in the request, already-active and disabled accounts are skipped with a reason; a pending invite is re-issued (new token, 14-day expiry). Email is sent in the background through the SMTP mailer; `links` lists join URLs when `method` is `link`/`both` or SMTP is not configured. `POST /accounts/:id/resend` re-issues a pending invite and always returns the link. `POST /accounts/:id/disable` / `enable` (director) end or restore access; enabling an account that never accepted makes it a pending invite again. `DELETE /accounts/:id` revokes a pending invite (409 otherwise). Mentor accounts need director access for every account action.
+- Roster: `POST /mentors/:contactId/invite` (director; email defaults to the contact's), `PUT /mentors/:contactId/settings` `{available, maxProjects|null}` (officer).
+- Auto-assign (officer): `POST /cohorts/:id/auto-assign/preview` returns a plan; `POST /cohorts/:id/auto-assign` `{assignments}` applies it all-or-nothing (409 when any pair is stale or over a cap).
+- Archive (officer) / delete (director): `POST /projects/:id/archive|restore`, `DELETE /projects/:id` (no builders and no activity), `POST /people/:id/archive|restore`, `DELETE /people/:id` (no activity; deletes their portal account). Archive and restore are idempotent.
+- Portal: `GET /api/portal/invite?token=` (public, rate-limited), `GET /api/portal/me`, `POST /api/portal/logout`, `GET /api/portal/builder`, `POST /api/portal/builder/onboarding`, `PATCH /api/portal/builder/profile`, `PATCH /api/portal/builder/project`, `POST /api/portal/builder/activity`, `GET /api/portal/mentor`, `POST /api/portal/mentor/activity`. Builders in an archived cohort read but get 409 on writes. Unsafe portal requests from another origin are 403.
+- Sign-in: `/auth/login?launchpad=<token>` accepts an invite; `/auth/login?portal=1` signs a bound account in. Outcomes redirect to `/launchpad`, `/launchpad/join?error=invalid|expired|used|disabled|discord_taken|failed`, or `/launchpad/login?error=not_found|disabled|archived`. The ordinary officer sign-in falls through to a portal session when the Discord account has no officer account but has an active portal account.

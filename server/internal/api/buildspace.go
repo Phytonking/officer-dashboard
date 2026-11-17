@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/url"
 	"regexp"
+	"strings"
 
 	"officerdashboard/internal/auth"
 	"officerdashboard/internal/store"
@@ -17,6 +18,11 @@ func (c *Ctx) buildspaceList() error {
 	if _, err := c.officer(); err != nil {
 		return err
 	}
+	qs := c.R.URL.Query()
+	cohortID, archived := qs.Get("cohort"), qs.Get("archived")
+	if len(cohortID) > 64 || (archived != "" && archived != "0" && archived != "1") {
+		return badRequest("Invalid query")
+	}
 	q := c.S.db.Read()
 	b, err := q.Buildspace(c.Context())
 	if err != nil {
@@ -26,7 +32,67 @@ func (c *Ctx) buildspaceList() error {
 		return err
 	}
 	b.WeekStart, b.WeekDue, b.Today = b.Schedule.Week.Start, b.Schedule.Week.Due, b.Schedule.Today
-	writeJSON(c.W, 200, b)
+	out, err := launchpadView(b, cohortID, archived == "1", c.S.nowMs())
+	if err != nil {
+		return err
+	}
+	writeJSON(c.W, 200, out)
+	return nil
+}
+
+// launchpadView narrows the whole register to one cohort (default: newest active) and, unless
+// archived is set, to rows that are not archived. Mentors are a club-wide roster.
+func launchpadView(b store.Buildspace, cohortID string, archived bool, now int64) (store.Buildspace, error) {
+	b.MarkExpired(now)
+	var cohort *store.LaunchpadCohort
+	if cohortID != "" {
+		if cohort = b.Cohort(cohortID); cohort == nil {
+			return b, notFoundErr("Cohort not found")
+		}
+	} else {
+		cohort = b.DefaultCohort()
+	}
+	out := b
+	out.Projects, out.People, out.Activity, out.Accounts = []store.BuildspaceProject{}, []store.BuildspacePerson{}, []store.BuildspaceActivity{}, []store.LaunchpadAccount{}
+	if cohort == nil {
+		return out, nil
+	}
+	id := cohort.ID
+	out.CohortID = &id
+	projects, people := map[string]bool{}, map[string]bool{}
+	for _, p := range b.Projects {
+		if p.CohortID == id && (archived || p.ArchivedAt == nil) {
+			out.Projects = append(out.Projects, p)
+			projects[p.ID] = true
+		}
+	}
+	for _, p := range b.People {
+		if p.CohortID == id && (archived || p.ArchivedAt == nil) {
+			out.People = append(out.People, p)
+			people[p.ID] = true
+		}
+	}
+	for _, a := range b.Activity {
+		if projects[a.ProjectID] && (a.PersonID == nil || people[*a.PersonID]) {
+			out.Activity = append(out.Activity, a)
+		}
+	}
+	for _, a := range b.Accounts {
+		if a.Kind == "builder" && a.CohortID != nil && *a.CohortID == id {
+			out.Accounts = append(out.Accounts, a)
+		}
+	}
+	return out, nil
+}
+
+// writableProject refuses writes to an archived project or a project in an archived cohort.
+func writableProject(b *store.Buildspace, p *store.BuildspaceProject) error {
+	if p.ArchivedAt != nil {
+		return conflict("This project is archived; restore it first")
+	}
+	if c := b.Cohort(p.CohortID); c == nil || c.Status != "active" {
+		return conflict("This cohort is archived")
+	}
 	return nil
 }
 
@@ -108,12 +174,8 @@ func (c *Ctx) buildspaceProjectSave() error {
 		p.Stage = r.Str("stage", validate.S{Req: true, Enum: buildspaceStages}).V
 		p.Links = r.Strings("links", true, 0, 10, nil, 2000)
 		p.MentorIDs = r.Strings("mentorIds", true, 0, 2, nil, 64)
-		for _, s := range p.Links {
-			u, e := url.Parse(s)
-			if e != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
-				r.Issues.Add("links", "Use http or https links")
-			}
-		}
+		p.CohortID = r.Str("cohortId", validate.S{Min: 1, Max: 64}).V
+		r.Issues = checkLinks(r.Issues, p.Links)
 	}); err != nil {
 		return err
 	}
@@ -127,11 +189,7 @@ func (c *Ctx) buildspaceProjectSave() error {
 		}
 		seen := map[string]bool{}
 		for _, id := range p.MentorIDs {
-			found := false
-			for _, m := range b.Mentors {
-				found = found || m.ID == id
-			}
-			if !found || seen[id] {
+			if b.Mentor(id) == nil || seen[id] {
 				return badRequest("Select distinct mentor contacts")
 			}
 			seen[id] = true
@@ -153,10 +211,28 @@ func (c *Ctx) buildspaceProjectSave() error {
 			}
 		}
 		var before any
-		for _, old := range b.Projects {
-			if old.ID == p.ID {
-				before = old
+		if old := b.Project(p.ID); old != nil {
+			// A project's cohort never changes; cohortId is ignored on update.
+			if err := writableProject(&b, old); err != nil {
+				return err
 			}
+			before = *old
+			p.CohortID = old.CohortID
+		} else {
+			// Creating: the named cohort, or the newest active one for older clients.
+			var cohort *store.LaunchpadCohort
+			if p.CohortID != "" {
+				cohort = b.Cohort(p.CohortID)
+			} else if cohort = b.DefaultCohort(); cohort == nil {
+				return badRequest("Create a cohort first")
+			}
+			if cohort == nil {
+				return badRequest("Cohort not found")
+			}
+			if cohort.Status != "active" {
+				return conflict("This cohort is archived")
+			}
+			p.CohortID = cohort.ID
 		}
 		if err = q.SaveBuildspaceProject(c.Context(), p); err != nil {
 			return err
@@ -169,15 +245,39 @@ func (c *Ctx) buildspaceProjectSave() error {
 	writeJSON(c.W, 200, map[string]any{"project": p})
 	return nil
 }
+
+// checkLinks requires http(s) URLs with a host.
+func checkLinks(issues *validate.Issues, links []string) *validate.Issues {
+	for _, s := range links {
+		u, e := url.Parse(s)
+		if e != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+			issues.Add("links", "Use http or https links")
+			break
+		}
+	}
+	return issues
+}
+
+var discordIDRE = regexp.MustCompile(`^\d{17,20}$`)
+
 func (c *Ctx) buildspacePersonSave() error {
 	if _, err := c.officer(); err != nil {
 		return err
 	}
 	p := store.BuildspacePerson{ID: c.R.PathValue("id")}
+	// Profile fields a builder fills in on the portal: kept unless the body sends them.
+	var has struct{ designation, pronouns, bio, email bool }
 	if err := c.jsonBody(func(r *validate.Reader) {
 		p.Name = r.Str("name", validate.S{Req: true, Trim: true, Min: 1, Max: 200}).V
 		p.ProjectID = r.Str("projectId", validate.S{Req: true, Max: 64}).V
 		p.JoinedOn = r.Str("joinedOn", validate.S{Req: true, Max: 10}).V
+		f := r.Str("designation", validate.S{Trim: true, Max: 80})
+		p.Designation, has.designation = f.V, f.Set
+		f = r.Str("pronouns", validate.S{Trim: true, Max: 40})
+		p.Pronouns, has.pronouns = f.V, f.Set
+		f = r.Str("bio", validate.S{Trim: true, Max: 500})
+		p.Bio, has.bio = f.V, f.Set
+		has.email = r.Has("email")
 		m := r.Str("memberId", validate.S{Max: 64, Null: true}).V
 		if m != "" {
 			p.MemberID = &m
@@ -185,8 +285,14 @@ func (c *Ctx) buildspacePersonSave() error {
 		d := r.Str("discordId", validate.S{Max: 20, Null: true}).V
 		if d != "" {
 			p.DiscordID = &d
-			if !regexp.MustCompile(`^\d{17,20}$`).MatchString(d) {
+			if !discordIDRE.MatchString(d) {
 				r.Issues.Add("discordId", "Use a 17–20 digit Discord ID")
+			}
+		}
+		if em := strings.ToLower(r.Str("email", validate.S{Trim: true, Max: 254, Null: true}).V); em != "" {
+			p.Email = &em
+			if !validate.IsEmail(em) {
+				r.Issues.Add("email", "Invalid email")
 			}
 		}
 	}); err != nil {
@@ -203,13 +309,14 @@ func (c *Ctx) buildspacePersonSave() error {
 		if err != nil {
 			return err
 		}
-		found := false
-		for _, v := range b.Projects {
-			found = found || v.ID == p.ProjectID
-		}
-		if !found {
+		project := b.Project(p.ProjectID)
+		if project == nil {
 			return badRequest("Project not found")
 		}
+		if err := writableProject(&b, project); err != nil {
+			return err
+		}
+		p.CohortID = project.CohortID
 		if p.MemberID != nil {
 			if _, err = q.Member(c.Context(), *p.MemberID); errors.Is(err, store.ErrNotFound) {
 				return badRequest("Member not found")
@@ -221,6 +328,24 @@ func (c *Ctx) buildspacePersonSave() error {
 		for _, old := range b.People {
 			if old.ID == p.ID {
 				before = old
+				if !has.designation {
+					p.Designation = old.Designation
+				}
+				if !has.pronouns {
+					p.Pronouns = old.Pronouns
+				}
+				if !has.bio {
+					p.Bio = old.Bio
+				}
+				if !has.email {
+					p.Email = old.Email
+				}
+				if old.ArchivedAt != nil {
+					return conflict("This builder is archived; restore them first")
+				}
+				if old.CohortID != p.CohortID {
+					return conflict("Builders cannot move between cohorts")
+				}
 				if old.ProjectID != p.ProjectID {
 					for _, a := range b.Activity {
 						if a.PersonID != nil && *a.PersonID == p.ID {
@@ -240,8 +365,18 @@ func (c *Ctx) buildspacePersonSave() error {
 	if err != nil {
 		return err
 	}
-	writeJSON(c.W, 200, map[string]any{"person": p})
+	writeJSON(c.W, 200, map[string]any{"person": c.reloadPerson(p)})
 	return nil
+}
+
+// reloadPerson returns the saved builder as the register shows it (account fields included).
+func (c *Ctx) reloadPerson(p store.BuildspacePerson) store.BuildspacePerson {
+	if b, err := c.S.db.Read().Buildspace(c.Context()); err == nil {
+		if v := b.Person(p.ID); v != nil {
+			return *v
+		}
+	}
+	return p
 }
 func (c *Ctx) buildspaceActivityCreate() error { return c.buildspaceActivitySave(false) }
 func (c *Ctx) buildspaceIngest() error         { return c.buildspaceActivitySave(true) }
@@ -259,8 +394,12 @@ func (c *Ctx) buildspaceActivitySave(ingest bool) error {
 	if ingest {
 		kinds = []string{"weekly"}
 		a.Source = "discord"
+		a.Visibility = "team"
 	}
 	if err := c.jsonBody(func(r *validate.Reader) {
+		if !ingest {
+			a.Visibility = r.Str("visibility", validate.S{Enum: []string{"team", "mentors", "officers"}, HasDef: true, Default: "officers"}).V
+		}
 		a.ProjectID = r.Str("projectId", validate.S{Req: !ingest, Max: 64}).V
 		a.Kind = r.Str("kind", validate.S{Req: true, Enum: kinds}).V
 		a.Date = r.Str("date", validate.S{Req: true, Max: 10}).V
@@ -321,22 +460,26 @@ func (c *Ctx) buildspaceActivitySave(ingest bool) error {
 				}
 			}
 		}
-		var project *store.BuildspaceProject
-		for i := range b.Projects {
-			if b.Projects[i].ID == a.ProjectID {
-				project = &b.Projects[i]
-			}
-		}
+		project := b.Project(a.ProjectID)
 		if project == nil {
 			return badRequest("Project not found")
 		}
+		if ingest && !b.ProjectLive(project) {
+			return badRequest("Builder is archived")
+		}
+		if err := writableProject(&b, project); err != nil {
+			return err
+		}
 		if a.PersonID != nil {
-			found := false
-			for _, p := range b.People {
-				found = found || (p.ID == *a.PersonID && p.ProjectID == a.ProjectID)
-			}
-			if !found {
+			p := b.Person(*a.PersonID)
+			if p == nil || p.ProjectID != a.ProjectID {
 				return badRequest("Builder must belong to the project")
+			}
+			if p.ArchivedAt != nil {
+				if ingest {
+					return badRequest("Builder is archived")
+				}
+				return conflict("This builder is archived")
 			}
 		}
 		if a.Kind == "weekly" && a.PersonID == nil {
@@ -399,6 +542,9 @@ func (c *Ctx) buildspaceActivityResolve() error {
 				}
 				if a.Status != "open" {
 					return conflict("Only open requests can be resolved")
+				}
+				if err := writableProject(&b, b.Project(a.ProjectID)); err != nil {
+					return err
 				}
 				if err = q.ResolveBuildspaceActivity(c.Context(), a.ID); err != nil {
 					return err

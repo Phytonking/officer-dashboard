@@ -68,6 +68,20 @@ Officers → Access applies on the person's very next request.
   edits, the page re-renders instead of remounting and offers a reload, so no draft is lost.
 - Losing director access still revokes the person's service tokens.
 
+## Launchpad portal accounts (builders and mentors)
+
+Builders and mentors sign in to `/launchpad` with Discord, but they are **not users**: their
+accounts live in `buildspace_launchpad_accounts`, with their own session table and cookie
+(`cseed_launchpad`). Officer APIs only ever resolve `users` rows, so a portal session gets 401
+on every officer endpoint, and an officer session gets 401 on `/api/portal/*`. Accounts are
+created only by an officer's email invite (a single-use link that expires after 14 days) and
+bind to whichever Discord account accepts it. A builder sees their own cohort, project,
+teammates, mentors and team-visible entries; a mentor sees the live projects they are assigned
+to, with team- and mentor-visible entries. Neither sees Finance data, officer-only entries,
+member records or contact notes. One Discord account can hold an officer account and one
+portal account; it cannot be a builder and a mentor at once. See
+[launchpad-cohorts.md](launchpad-cohorts.md).
+
 ## Permission matrix
 
 Roles rank `leadership > director > officer`; unknown roles are denied. Owner is an additional flag on an active leadership account. A higher role inherits lower-role permissions; resource-specific rules still apply.
@@ -84,6 +98,8 @@ Roles rank `leadership > director > officer`; unknown roles are denied. Owner is
 | Invite officers, fix a not-yet-onboarded invite's name/subteam, manage officer subteam/title | No | Yes, except leadership targets | Yes | Yes |
 | Change roles / director active status / edit leadership | No | No | Yes | Yes |
 | Manage ownership or demote/deactivate owners | No | No | No | Yes, with last-owner protection |
+| Launchpad: invite builders, resend/revoke builder invites, mentor availability/caps, auto-assign, archive/restore | Yes | Yes | Yes | Yes |
+| Launchpad: create/archive/delete cohorts, invite mentors, manage mentor accounts, disable/enable accounts, delete projects/builders | No | Yes | Yes | Yes |
 
 Approval cannot be self-approval, and the requester never settles or closes their own request (no self-payout). Directors settle up to the approved estimate plus the agent tolerance; larger amounts need leadership. Receipts download (and show a link) for the uploader, the requester and director+. A director's own service token cannot buy or settle that director's requests. Service tokens stop working when their creator is deactivated or loses director access, and those changes revoke them. Member edits/export require director access; ordinary officers can read member records. Design request permissions also depend on authorship, assignment and Design subteam membership. Design members and director+ can assign and move work; only the requester can approve a version in review. Director+ can move unassigned work without becoming its designer. Leadership can explicitly confirm a delivery override, recorded separately in the audit log without recording requester approval. Directors cannot override delivery. Marking an event as not needing design is limited to director+ and the event's host; any officer can say an event needs design. See [API reference](api.md) for endpoint-specific behavior. Source: `server/internal/auth/auth.go`, `server/internal/api/{admin,officers,invites,members,design,requests}.go` and database guards.
 

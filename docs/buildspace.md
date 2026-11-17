@@ -1,6 +1,8 @@
 # Buildspace + Launchpad draft
 
-Buildspace + Launchpad keeps the builder register, projects, mentor assignments and activity together at `/buildspace-launchpad`. All existing active officers, directors and leadership can read and edit it. External mentor contacts have no sign-in rights just because they are assigned: a mentor who needs dashboard access must already be an explicitly allowlisted officer. A future mentor portal should scope access to assigned projects and redact private notes before adding a new role.
+> **V0.12:** cohorts, builder and mentor portals with email invites, the mentor roster with auto-assign, archive/restore/delete and member auto-linking are described in [launchpad-cohorts.md](launchpad-cohorts.md). Where the two differ, that document wins.
+
+Buildspace + Launchpad keeps the builder register, projects, mentor assignments and activity together at `/buildspace-launchpad`. All existing active officers, directors and leadership can read and edit it. Mentor contacts get no officer access by being assigned. Since V0.12 a mentor can be invited to the separate mentor portal, which shows only their assigned projects and entries whose visibility allows it.
 
 ## Working model
 
@@ -69,9 +71,10 @@ Manual check-ins use the drawer's Add entry section and share the same timeline.
 
 - Is one active project per builder correct, and how should project transfers preserve history?
 - Should excused absences suppress follow-up? (The weekly deadline is now a leadership setting.)
-- Which mentor notes are private if mentors later gain restricted access?
-- Should member and Finance linking use search pickers rather than explicit IDs?
-- Are absence date ranges, entry corrections/deletion and cohort/archive management needed next?
+- Should Finance linking use a search picker rather than explicit IDs?
+- Are absence date ranges and entry corrections/deletion needed next?
+
+Resolved in V0.12 ([launchpad-cohorts.md](launchpad-cohorts.md)): mentor-note privacy (per-entry visibility), cohort and archive management, and member linking (automatic by UW email at onboarding).
 
 ## Home calendar sources
 
@@ -79,7 +82,7 @@ The Home calendar registry includes `buildspace-absences`, `buildspace-weekly` a
 
 Absence and mentor check-in entries appear on their reported date, linking to their project drawer. Titles show the event kind, project, and builder when present; note bodies and absence reasons are omitted. All existing officers already have access to the full Buildspace + Launchpad register, and these sources follow that same cohort visibility policy.
 
-Weekly due items follow the check-in schedule: one per builder on each week's due date (titles include the due time when set), including the longer transition week after a change. A dated weekly entry for that builder in the same week removes the due item. Builders not yet joined and projects marked Shipped are excluded. Due items link to the builder drawer, remain date-only across viewer time zones, and send no reminders.
+Weekly due items follow the check-in schedule: one per builder on each week's due date (titles include the due time when set), including the longer transition week after a change. A dated weekly entry for that builder in the same week removes the due item. Builders not yet joined, projects marked Shipped, archived projects and builders, and archived cohorts are excluded. Due items link to the builder drawer, remain date-only across viewer time zones, and send no reminders.
 
 The loaders filter the requested exclusive date range in SQL; the registry controls metadata, validation and widget toggles without another frontend source switch. Migration `0017_buildspace.sql` follows dashboard `0015` and calendar `0016`.
 

@@ -16,7 +16,7 @@ import (
 	"officerdashboard/internal/auth"
 )
 
-// Message is one invitation email.
+// Message is one email: an .ics invitation, or plain text when ICS is empty.
 type Message struct {
 	To      string
 	Subject string
@@ -54,6 +54,9 @@ func wrap76(s string) string {
 // Build renders the MIME message: a text part, the text/calendar part mail clients use
 // for the Accept/Decline UI, and the same calendar as an invite.ics attachment.
 func Build(from string, m Message, now time.Time) []byte {
+	if m.ICS == "" {
+		return buildText(from, m, now)
+	}
 	boundary := "cseed-" + auth.RandomToken(12)
 	method := m.Method
 	if method == "" {
@@ -68,6 +71,15 @@ func Build(from string, m Message, now time.Time) []byte {
 	fmt.Fprintf(&b, "--%s\r\nContent-Type: text/calendar; charset=utf-8; method=%s\r\nContent-Transfer-Encoding: base64\r\n\r\n%s\r\n", boundary, method, cal)
 	fmt.Fprintf(&b, "--%s\r\nContent-Type: application/ics; name=\"invite.ics\"\r\nContent-Disposition: attachment; filename=\"invite.ics\"\r\nContent-Transfer-Encoding: base64\r\n\r\n%s\r\n", boundary, cal)
 	fmt.Fprintf(&b, "--%s--\r\n", boundary)
+	return []byte(b.String())
+}
+
+// buildText renders a plain text-only email (Launchpad invites): no calendar parts.
+func buildText(from string, m Message, now time.Time) []byte {
+	var b strings.Builder
+	fmt.Fprintf(&b, "From: %s\r\nTo: %s\r\nSubject: %s\r\nDate: %s\r\nMessage-ID: <%s@cseed-dashboard>\r\nMIME-Version: 1.0\r\n",
+		(&mail.Address{Name: "CSEED Officer Dashboard", Address: from}).String(), m.To, header(m.Subject), now.UTC().Format(time.RFC1123Z), auth.RandomToken(16))
+	fmt.Fprintf(&b, "Content-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: base64\r\n\r\n%s\r\n", wrap76(base64.StdEncoding.EncodeToString([]byte(m.Text))))
 	return []byte(b.String())
 }
 

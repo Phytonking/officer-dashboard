@@ -48,7 +48,7 @@ test('tabs slide one indicator and views crossfade without resizing the page', a
   await devLogin(page, 'director');
   await open(page);
   const tabs = page.getByRole('tablist', { name: 'Buildspace + Launchpad directory' });
-  await expect(tabs.getByRole('tab')).toHaveCount(3);
+  await expect(tabs.getByRole('tab')).toHaveCount(4);
   await expect(tabs.getByRole('tab', { name: /People/ })).toHaveAttribute('aria-selected', 'true');
   const bar = page.locator('.bs-toolbar .tab-indicator');
   const before = await bar.evaluate((el) => getComputedStyle(el).transform);
@@ -402,6 +402,8 @@ test('cards use the officer card style in every grouping, open the drawer, and f
   await page.getByRole('menuitem', { name: 'Edit builder' }).click();
   await expect(page.locator('#buildspace-detail')).toBeVisible();
   await page.keyboard.press('Escape');
+  // Closing pops history asynchronously; let it land before the next navigation.
+  await expect(page).not.toHaveURL(/edit=person/);
   // Projects and mentors render the same card family; board lanes reuse the project card.
   await open(page, '/buildspace-launchpad?tab=projects&view=cards');
   await expect(page.locator('.bs-groups [data-project-card]').first().locator('.bs-mark')).toBeVisible();

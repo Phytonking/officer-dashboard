@@ -81,7 +81,7 @@ type devField struct{ Name, Value string }
 // registerDev adds the developer sign-in of test builds. It needs DEV_AUTH=1 as well, and,
 // with DEV_AUTH_KEY set, the key on every request.
 //
-//   - POST /auth/dev (form: as=leadership|director|officer [user=<id>] | discord=<id>,
+//   - POST /auth/dev (form: as=leadership|director|officer|builder|mentor [user=<id>] | discord=<id>,
 //     next, key) signs in. as= picks the oldest active non-owner user with that role
 //     (creating a placeholder when there is none) or the given user, never an owner;
 //     discord= signs in as that Discord account the way /auth/callback would, never as
@@ -109,7 +109,7 @@ func (s *Server) registerDev(_ *http.ServeMux, h func(string, handlerFunc)) {
 			return nil
 		}
 		var fields []devField
-		for _, k := range []string{"as", "user", "discord", "next", "key"} {
+		for _, k := range []string{"as", "user", "discord", "launchpad", "next", "key"} {
 			if v := q.Get(k); v != "" {
 				fields = append(fields, devField{k, v})
 			}
@@ -117,6 +117,9 @@ func (s *Server) registerDev(_ *http.ServeMux, h func(string, handlerFunc)) {
 		who := q.Get("as")
 		if d := q.Get("discord"); d != "" {
 			who = "Discord account " + d
+			if q.Get("launchpad") != "" {
+				who += " (accepting a Launchpad invite)"
+			}
 		}
 		if who == "" {
 			who = "?"
@@ -149,6 +152,16 @@ func (s *Server) registerDev(_ *http.ServeMux, h func(string, handlerFunc)) {
 		}
 		next := auth.SafeNext(f.Get("next"))
 		ctx := c.Context()
+		if t := f.Get("launchpad"); t != "" {
+			// Accept a Launchpad invite as this Discord account, exactly as /auth/callback does
+			// after Discord sign-in: same binding rules, same redirects (join page on refusal).
+			id := f.Get("discord")
+			if !discordIDRE.MatchString(id) || len(t) > 128 {
+				return badRequest("launchpad needs discord=<17–20 digit ID> and the invite token")
+			}
+			c.S.log.Warn("[dev-auth] accepting launchpad invite", "discord", id)
+			return c.portalAccept(id, auth.SHA256Hex(t))
+		}
 		if id := f.Get("discord"); id != "" {
 			var userID, reason string
 			err := c.S.db.Write(ctx, func(w *store.Queries) error {
@@ -214,8 +227,38 @@ func (s *Server) registerDev(_ *http.ServeMux, h func(string, handlerFunc)) {
 			http.Redirect(c.W, c.R, next, http.StatusSeeOther)
 			return nil
 		}
+		if as == "builder" || as == "mentor" {
+			// Launchpad portal session for a seeded (or given) active account: user=<account id>.
+			accounts, err := c.S.db.Read().LaunchpadAccounts(ctx)
+			if err != nil {
+				return err
+			}
+			var pick *store.LaunchpadAccount
+			for i := len(accounts) - 1; i >= 0; i-- { // oldest first
+				a := &accounts[i]
+				if a.Kind != as || a.Status != "active" || (f.Get("user") != "" && a.ID != f.Get("user")) {
+					continue
+				}
+				if id, reason, err := c.S.portalAccountFor(ctx, *a.DiscordID); err == nil && reason == "" && id == a.ID {
+					pick = a
+					break
+				}
+			}
+			if pick == nil {
+				return badRequest("No active " + as + " account to sign in as")
+			}
+			c.S.log.Warn("[dev-auth] signing in", "as", as, "account", pick.ID)
+			if err := c.S.createPortalSession(ctx, c.W, c.R, pick.ID); err != nil {
+				return err
+			}
+			if next == "/" {
+				next = "/launchpad"
+			}
+			http.Redirect(c.W, c.R, next, http.StatusSeeOther)
+			return nil
+		}
 		if as != auth.RoleDirector && as != auth.RoleOfficer && as != auth.RoleLeadership {
-			http.Error(c.W, "as must be leadership, director or officer", http.StatusBadRequest)
+			http.Error(c.W, "as must be leadership, director, officer, builder or mentor", http.StatusBadRequest)
 			return nil
 		}
 		var userID string
