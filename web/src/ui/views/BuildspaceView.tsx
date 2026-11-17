@@ -675,6 +675,8 @@ function BuildspaceContent({
         eyebrow={detailPerson ? "Buildspace + Launchpad builder" : undefined}
         subtitle={detailPerson ? <button class="bs-title" onClick={() => pushEntry({ person: null, project: detailPerson.projectId })}>{project(detailPerson.projectId).name}</button> : undefined}
         actions={detailPerson ? [
+          // The weekly follow-up's main action; "Add entry" is otherwise the last, often scrolled-off tab.
+          { label: "Log check-in", icon: "plus", tab: "add entry", primary: checkIn(detailPerson, b).missed, data: "log-checkin" },
           { label: "Edit builder", icon: "pen", onClick: () => pushEntry({ edit: "person" }) },
           ...(detailPerson.memberId ? [{ label: "Member record", icon: "user", href: `/members?person=${encodeURIComponent(detailPerson.memberId)}` }] : []),
         ] : []}

@@ -64,6 +64,8 @@ export interface PersonAction {
   /** Opens in a new tab (LinkedIn, Discord). */
   external?: boolean;
   onClick?: () => void;
+  /** Switches the drawer to this tab (a section's main action, e.g. Buildspace's "Log check-in"). */
+  tab?: string;
   primary?: boolean;
   /** Stable hook for tests. */
   data?: string;
@@ -286,7 +288,7 @@ export function PersonDrawer<K extends string>({
                     {a.label}
                   </a>
                 ) : (
-                  <button key={a.label} type="button" class={`btn${a.primary ? ' btn--primary' : ''}`} data-person-action={a.data} onClick={a.onClick}>
+                  <button key={a.label} type="button" class={`btn${a.primary ? ' btn--primary' : ''}`} data-person-action={a.data} onClick={a.tab ? () => change(a.tab as K) : a.onClick}>
                     {a.icon && <Icon name={a.icon} />}
                     {a.label}
                   </button>
