@@ -75,16 +75,29 @@ agent ── POST /mcp  Authorization: Bearer … ─▶ tools
 
 ## Tools
 
-67 tools, one per API endpoint: context (`whoami`, `search`, `lookups`,
+85 tools, one per API endpoint: context (`whoami`, `search`, `lookups`,
 `calendar_feed`…), events, purchase requests (including `attach_receipt` with base64
 files, 10 MB max), finance reports and budgets, the design board, external contacts, members,
-officers, Buildspace Launchpad and the officer's own profile. Deletes and
-period closes are marked `destructiveHint` so clients ask before running them.
+officers, Buildspace Launchpad (cohorts, builder and mentor invites, mentor roster and
+availability, mentor auto-assign preview and apply, archive/restore/delete of projects and
+people, activity with its portal visibility) and the officer's own profile. Deletes and
+period closes are marked `destructiveHint` so clients ask before running them. A tool
+whose endpoint needs a higher role (director-only cohort changes, account disable/enable,
+mentor invites, deletes…) is left out of `tools/list` for an officer and refused if called.
+
+Launchpad invites through an agent go **by email only**: `method` must be `email`, and no
+response hands an agent a join link (`links` is empty; a resend returns `link: null`). An
+invite link is a sign-up credential. When invite email is not configured, the invite tools
+answer 409 and the officer invites from the dashboard. The dashboard itself is unchanged.
 
 Not exposed: sign-in and onboarding, Google Calendar connection, file downloads,
 `/api/admin/*` (owners, roles, accounts, service tokens: an agent never manages access
 or credentials), officer invites (an invite link is a sign-up credential), the
-service-token APIs and Cloudflare sync.
+builder/mentor portal (`/api/portal/*`: portal accounts have their own table, session and
+cookie; a bearer token never authenticates there, and a portal session never reaches `/mcp`
+or the consent page, which needs an officer sign-in), the dev-only `/auth/dev` forms, the
+service-token APIs and Cloudflare sync. The generator and the server both refuse a tool
+outside `/api/` or under `/api/portal`.
 
 Tool names, descriptions and the endpoint list live in `scripts/gen-mcp-tools.mjs`; the
 input schemas come from `src/core/contracts.ts`. After changing either, regenerate:

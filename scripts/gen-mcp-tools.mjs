@@ -27,7 +27,8 @@ const out = join(root, 'server/internal/api/mcp_tools.json');
  * Not exposed: sign-in, onboarding and Google Calendar connection (browser flows), file
  * downloads (binary), /api/admin/* (owners, roles, accounts, service tokens: an agent must
  * never manage access or credentials), officer invites (an invite link is a sign-up
- * credential), the service-token APIs (/api/ingest, /api/agent),
+ * credential), the service-token APIs (/api/ingest, /api/agent), the builder/mentor portal
+ * (/api/portal/*: portal accounts, never an officer; refused below),
  * club settings, preferences/widget layout and Cloudflare sync.
  */
 const TOOLS = {
@@ -107,12 +108,32 @@ const TOOLS = {
   officerUpdate: { name: 'update_officer', title: 'Update officer', description: "Change an officer's title, subteam or start term (director+)." },
 
   // ── Buildspace Launchpad ──
-  buildspaceList: { name: 'buildspace_overview', title: 'Buildspace overview', hint: 'read', description: 'Buildspace Launchpad: projects, people, mentors, activity and weekly schedule.' },
+  buildspaceList: { name: 'buildspace_overview', title: 'Buildspace overview', hint: 'read', description: 'Buildspace Launchpad: cohorts, projects, people, mentors (with availability and load), builder/mentor accounts, activity and weekly schedule. Filter by `cohort` id; `archived` "1" includes archived projects and people.' },
   buildspaceProjectSave: { name: 'save_buildspace_project', title: 'Save Buildspace project', hint: 'idempotent', description: 'Create or update a Buildspace project by id.' },
   buildspacePersonSave: { name: 'save_buildspace_person', title: 'Save Buildspace person', hint: 'idempotent', description: 'Create or update a Buildspace participant by id.' },
-  buildspaceActivityCreate: { name: 'log_buildspace_activity', title: 'Log Buildspace activity', description: "Log a Buildspace weekly check-in, mentor note, request, purchase or absence. Returns the week's summary, not the new entry's id; read buildspace_overview for ids." },
+  buildspaceActivityCreate: { name: 'log_buildspace_activity', title: 'Log Buildspace activity', description: "Log a Buildspace weekly check-in, mentor note, request, purchase or absence. `visibility` (\"team\", \"mentors\" or \"officers\", the default) decides who sees it in the builder and mentor portals. Returns the week's summary, not the new entry's id; read buildspace_overview for ids." },
   buildspaceActivityResolve: { name: 'resolve_buildspace_activity', title: 'Resolve Buildspace request', hint: 'idempotent', description: 'Mark an open Buildspace request (activity kind "request") resolved. Find ids in buildspace_overview.' },
   buildspaceSchedulePut: { name: 'set_buildspace_schedule', title: 'Set Buildspace schedule', hint: 'idempotent', description: 'Replace the Buildspace weekly schedule (leadership).' },
+
+  // ── Launchpad cohorts, builder/mentor accounts, mentor roster ──
+  launchpadCohortCreate: { name: 'create_launchpad_cohort', title: 'Create Launchpad cohort', description: 'Start a new Launchpad cohort (name, start date, optional end date).' },
+  launchpadCohortUpdate: { name: 'update_launchpad_cohort', title: 'Update Launchpad cohort', description: 'Rename a cohort, change its dates, or archive/reactivate it (status "archived" or "active"). Partial update.' },
+  launchpadCohortDelete: { name: 'delete_launchpad_cohort', title: 'Delete Launchpad cohort', hint: 'destructive', description: 'Permanently delete a cohort. Ask the officer to confirm first; archiving (update_launchpad_cohort) is usually what they want.' },
+  launchpadInvite: { name: 'invite_launchpad_builders', title: 'Invite builders to a cohort', description: 'Email builder invites for a cohort (up to 200 addresses). Through an agent invites go by email only (method "email"): an invite link is a sign-up credential, so links are never returned here. Already-active or duplicate addresses come back in `skipped`.' },
+  launchpadAccountResend: { name: 'resend_launchpad_invite', title: 'Resend Launchpad invite', description: 'Email a fresh invite to a pending builder or mentor account (the old link stops working). The link itself is not returned to an agent.' },
+  launchpadAccountDisable: { name: 'disable_launchpad_account', title: 'Disable Launchpad account', description: 'Disable a builder or mentor portal account and sign it out everywhere.' },
+  launchpadAccountEnable: { name: 'enable_launchpad_account', title: 'Enable Launchpad account', description: 'Re-enable a disabled builder or mentor portal account.' },
+  launchpadAccountRevoke: { name: 'revoke_launchpad_invite', title: 'Revoke Launchpad invite', hint: 'destructive', description: 'Revoke a pending builder or mentor invite (the account is removed). Ask the officer to confirm first.' },
+  launchpadMentorInvite: { name: 'invite_launchpad_mentor', title: 'Invite mentor to the portal', description: "Email a mentor contact an invite to the mentor portal (uses the contact's email unless `email` is given). Through an agent, email only; the link is never returned." },
+  launchpadMentorSettings: { name: 'set_launchpad_mentor_settings', title: 'Set mentor availability', hint: 'idempotent', description: 'Set whether a mentor contact is available for auto-assign and the most projects they take (null for no cap).' },
+  launchpadAutoAssignPreview: { name: 'preview_launchpad_mentor_assignment', title: 'Preview mentor auto-assign', hint: 'read', description: "Propose mentor assignments for a cohort's projects without saving anything. Review them with the officer, then apply with apply_launchpad_mentor_assignment." },
+  launchpadAutoAssign: { name: 'apply_launchpad_mentor_assignment', title: 'Apply mentor assignments', description: 'Save mentor assignments for projects in a cohort (usually the preview, possibly edited).' },
+  launchpadProjectArchive: { name: 'archive_launchpad_project', title: 'Archive Launchpad project', hint: 'idempotent', description: 'Archive a Launchpad project (hidden from the board; restore_launchpad_project brings it back).' },
+  launchpadProjectRestore: { name: 'restore_launchpad_project', title: 'Restore Launchpad project', hint: 'idempotent', description: 'Restore an archived Launchpad project.' },
+  launchpadProjectDelete: { name: 'delete_launchpad_project', title: 'Delete Launchpad project', hint: 'destructive', description: 'Permanently delete a Launchpad project. Ask the officer to confirm first; archiving is usually what they want.' },
+  launchpadPersonArchive: { name: 'archive_launchpad_person', title: 'Archive Launchpad person', hint: 'idempotent', description: 'Archive a Launchpad participant (restore_launchpad_person brings them back).' },
+  launchpadPersonRestore: { name: 'restore_launchpad_person', title: 'Restore Launchpad person', hint: 'idempotent', description: 'Restore an archived Launchpad participant.' },
+  launchpadPersonDelete: { name: 'delete_launchpad_person', title: 'Delete Launchpad person', hint: 'destructive', description: 'Permanently delete a Launchpad participant. Ask the officer to confirm first; archiving is usually what they want.' },
 
   // ── me ──
   profileGet: { name: 'get_my_profile', title: 'Get my profile', hint: 'read', description: "The officer's own profile." },
@@ -146,6 +167,7 @@ function generate(contracts, z) {
     const ep = ENDPOINTS[key];
     if (!ep) throw new Error(`TOOLS.${key}: no such endpoint in ENDPOINTS`);
     if (!(ep.auth in RANK)) throw new Error(`TOOLS.${key}: auth ${ep.auth} cannot be an MCP tool`);
+    if (ep.path === '/api/portal' || ep.path.startsWith('/api/portal/')) throw new Error(`TOOLS.${key}: portal endpoints are never MCP tools`);
     const properties = {};
     const required = [];
     const pathParams = [...ep.path.matchAll(/:(\w+)/g)].map((m) => m[1]);

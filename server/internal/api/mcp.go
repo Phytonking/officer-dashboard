@@ -71,6 +71,11 @@ func init() {
 	mcpTools = f.Tools
 	for i := range mcpTools {
 		t := &mcpTools[i]
+		// Tools are officer API routes only: never the builder/mentor portal (its own
+		// accounts and cookie) and nothing outside /api.
+		if !strings.HasPrefix(t.Path, "/api/") || t.Path == "/api/portal" || strings.HasPrefix(t.Path, "/api/portal/") {
+			panic("mcp_tools.json " + t.Name + ": " + t.Path + " cannot be an MCP tool")
+		}
 		var schema struct {
 			Properties map[string]json.RawMessage `json:"properties"`
 			Required   []string                   `json:"required"`
@@ -233,7 +238,11 @@ func (c *Ctx) mcpPost() error {
 // mcpRateLimited answers 429 with Retry-After and a JSON-RPC error for each request in the
 // message (or one with a null id when it held only notifications), so a client can show it.
 func (c *Ctx) mcpRateLimited(msgs []rpcMessage, batch bool, secs int) {
-	e := &rpcError{-32000, fmt.Sprintf("Rate limited: an agent connection may make %d calls a minute; try again in %d seconds", int(c.S.mcpLimit.perMinute), secs)}
+	unit := "seconds"
+	if secs == 1 {
+		unit = "second"
+	}
+	e := &rpcError{-32000, fmt.Sprintf("Rate limited: an agent connection may make %d calls a minute; try again in %d %s", int(c.S.mcpLimit.perMinute), secs, unit)}
 	var out []rpcResponse
 	for _, m := range msgs {
 		if m.Method != "" && len(m.ID) > 0 && string(m.ID) != "null" {

@@ -1584,6 +1584,22 @@
                 "properties": {
                   "to": {
                     "type": "string",
+                    "const": "approved"
+                  },
+                  "comment": {
+                    "type": "string",
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "to"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "to": {
+                    "type": "string",
                     "const": "fulfilling"
                   },
                   "comment": {
@@ -3599,12 +3615,15 @@
     {
       "name": "buildspace_overview",
       "title": "Buildspace overview",
-      "description": "Buildspace Launchpad: projects, people, mentors, activity and weekly schedule.",
+      "description": "Buildspace Launchpad: cohorts, projects, people, mentors (with availability and load), builder/mentor accounts, activity and weekly schedule. Filter by `cohort` id; `archived` \"1\" includes archived projects and people.",
       "endpoint": "buildspaceList",
       "method": "GET",
       "path": "/api/buildspace-launchpad",
       "minRole": "officer",
-      "queryKeys": [],
+      "queryKeys": [
+        "cohort",
+        "archived"
+      ],
       "fieldKeys": [],
       "multipart": "",
       "response": "json",
@@ -3617,7 +3636,20 @@
       },
       "inputSchema": {
         "type": "object",
-        "properties": {},
+        "properties": {
+          "cohort": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "archived": {
+            "type": "string",
+            "enum": [
+              "0",
+              "1"
+            ]
+          }
+        },
         "required": [],
         "additionalProperties": false
       }
@@ -3695,6 +3727,11 @@
                   "minLength": 1,
                   "maxLength": 64
                 }
+              },
+              "cohortId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
               }
             },
             "required": [
@@ -3780,6 +3817,30 @@
               "joinedOn": {
                 "type": "string",
                 "format": "date"
+              },
+              "designation": {
+                "type": "string",
+                "maxLength": 80
+              },
+              "pronouns": {
+                "type": "string",
+                "maxLength": 40
+              },
+              "bio": {
+                "type": "string",
+                "maxLength": 500
+              },
+              "email": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 254,
+                    "format": "email"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
             "required": [
@@ -3800,7 +3861,7 @@
     {
       "name": "log_buildspace_activity",
       "title": "Log Buildspace activity",
-      "description": "Log a Buildspace weekly check-in, mentor note, request, purchase or absence. Returns the week's summary, not the new entry's id; read buildspace_overview for ids.",
+      "description": "Log a Buildspace weekly check-in, mentor note, request, purchase or absence. `visibility` (\"team\", \"mentors\" or \"officers\", the default) decides who sees it in the builder and mentor portals. Returns the week's summary, not the new entry's id; read buildspace_overview for ids.",
       "endpoint": "buildspaceActivityCreate",
       "method": "POST",
       "path": "/api/buildspace-launchpad/activity",
@@ -3889,6 +3950,14 @@
                   {
                     "type": "null"
                   }
+                ]
+              },
+              "visibility": {
+                "type": "string",
+                "enum": [
+                  "team",
+                  "mentors",
+                  "officers"
                 ]
               }
             },
@@ -3991,6 +4060,782 @@
         },
         "required": [
           "body"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "create_launchpad_cohort",
+      "title": "Create Launchpad cohort",
+      "description": "Start a new Launchpad cohort (name, start date, optional end date). Requires the director role.",
+      "endpoint": "launchpadCohortCreate",
+      "method": "POST",
+      "path": "/api/buildspace-launchpad/cohorts",
+      "minRole": "director",
+      "queryKeys": [],
+      "fieldKeys": [],
+      "multipart": "",
+      "response": "json",
+      "annotations": {
+        "title": "Create Launchpad cohort",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "startsOn": {
+                "type": "string",
+                "format": "date"
+              },
+              "endsOn": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "name",
+              "startsOn"
+            ],
+            "description": "The JSON request body."
+          }
+        },
+        "required": [
+          "body"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "update_launchpad_cohort",
+      "title": "Update Launchpad cohort",
+      "description": "Rename a cohort, change its dates, or archive/reactivate it (status \"archived\" or \"active\"). Partial update. Requires the director role.",
+      "endpoint": "launchpadCohortUpdate",
+      "method": "PATCH",
+      "path": "/api/buildspace-launchpad/cohorts/:id",
+      "minRole": "director",
+      "queryKeys": [],
+      "fieldKeys": [],
+      "multipart": "",
+      "response": "json",
+      "annotations": {
+        "title": "Update Launchpad cohort",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The record id (from a list_* or search result)."
+          },
+          "body": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "startsOn": {
+                "type": "string",
+                "format": "date"
+              },
+              "endsOn": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "active",
+                  "archived"
+                ]
+              }
+            },
+            "description": "The fields to change (only these are updated)."
+          }
+        },
+        "required": [
+          "id",
+          "body"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "delete_launchpad_cohort",
+      "title": "Delete Launchpad cohort",
+      "description": "Permanently delete a cohort. Ask the officer to confirm first; archiving (update_launchpad_cohort) is usually what they want. Requires the director role.",
+      "endpoint": "launchpadCohortDelete",
+      "method": "DELETE",
+      "path": "/api/buildspace-launchpad/cohorts/:id",
+      "minRole": "director",
+      "queryKeys": [],
+      "fieldKeys": [],
+      "multipart": "",
+      "response": "json",
+      "annotations": {
+        "title": "Delete Launchpad cohort",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The record id (from a list_* or search result)."
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "invite_launchpad_builders",
+      "title": "Invite builders to a cohort",
+      "description": "Email builder invites for a cohort (up to 200 addresses). Through an agent invites go by email only (method \"email\"): an invite link is a sign-up credential, so links are never returned here. Already-active or duplicate addresses come back in `skipped`.",
+      "endpoint": "launchpadInvite",
+      "method": "POST",
+      "path": "/api/buildspace-launchpad/cohorts/:id/invites",
+      "minRole": "officer",
+      "queryKeys": [],
+      "fieldKeys": [],
+      "multipart": "",
+      "response": "json",
+      "annotations": {
+        "title": "Invite builders to a cohort",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The record id (from a list_* or search result)."
+          },
+          "body": {
+            "type": "object",
+            "properties": {
+              "invites": {
+                "minItems": 1,
+                "maxItems": 200,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "email": {
+                      "type": "string",
+                      "maxLength": 254,
+                      "format": "email"
+                    },
+                    "name": {
+                      "type": "string",
+                      "maxLength": 200
+                    }
+                  },
+                  "required": [
+                    "email"
+                  ]
+                }
+              },
+              "method": {
+                "default": "email",
+                "type": "string",
+                "enum": [
+                  "email",
+                  "link",
+                  "both"
+                ]
+              }
+            },
+            "required": [
+              "invites"
+            ],
+            "description": "The JSON request body."
+          }
+        },
+        "required": [
+          "id",
+          "body"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "resend_launchpad_invite",
+      "title": "Resend Launchpad invite",
+      "description": "Email a fresh invite to a pending builder or mentor account (the old link stops working). The link itself is not returned to an agent.",
+      "endpoint": "launchpadAccountResend",
+      "method": "POST",
+      "path": "/api/buildspace-launchpad/accounts/:id/resend",
+      "minRole": "officer",
+      "queryKeys": [],
+      "fieldKeys": [],
+      "multipart": "",
+      "response": "json",
+      "annotations": {
+        "title": "Resend Launchpad invite",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The record id (from a list_* or search result)."
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "disable_launchpad_account",
+      "title": "Disable Launchpad account",
+      "description": "Disable a builder or mentor portal account and sign it out everywhere. Requires the director role.",
+      "endpoint": "launchpadAccountDisable",
+      "method": "POST",
+      "path": "/api/buildspace-launchpad/accounts/:id/disable",
+      "minRole": "director",
+      "queryKeys": [],
+      "fieldKeys": [],
+      "multipart": "",
+      "response": "json",
+      "annotations": {
+        "title": "Disable Launchpad account",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The record id (from a list_* or search result)."
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "enable_launchpad_account",
+      "title": "Enable Launchpad account",
+      "description": "Re-enable a disabled builder or mentor portal account. Requires the director role.",
+      "endpoint": "launchpadAccountEnable",
+      "method": "POST",
+      "path": "/api/buildspace-launchpad/accounts/:id/enable",
+      "minRole": "director",
+      "queryKeys": [],
+      "fieldKeys": [],
+      "multipart": "",
+      "response": "json",
+      "annotations": {
+        "title": "Enable Launchpad account",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The record id (from a list_* or search result)."
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "revoke_launchpad_invite",
+      "title": "Revoke Launchpad invite",
+      "description": "Revoke a pending builder or mentor invite (the account is removed). Ask the officer to confirm first.",
+      "endpoint": "launchpadAccountRevoke",
+      "method": "DELETE",
+      "path": "/api/buildspace-launchpad/accounts/:id",
+      "minRole": "officer",
+      "queryKeys": [],
+      "fieldKeys": [],
+      "multipart": "",
+      "response": "json",
+      "annotations": {
+        "title": "Revoke Launchpad invite",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The record id (from a list_* or search result)."
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "invite_launchpad_mentor",
+      "title": "Invite mentor to the portal",
+      "description": "Email a mentor contact an invite to the mentor portal (uses the contact's email unless `email` is given). Through an agent, email only; the link is never returned. Requires the director role.",
+      "endpoint": "launchpadMentorInvite",
+      "method": "POST",
+      "path": "/api/buildspace-launchpad/mentors/:contactId/invite",
+      "minRole": "director",
+      "queryKeys": [],
+      "fieldKeys": [],
+      "multipart": "",
+      "response": "json",
+      "annotations": {
+        "title": "Invite mentor to the portal",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contactId": {
+            "type": "string",
+            "description": "The contactId id (from a list_* or search result)."
+          },
+          "body": {
+            "type": "object",
+            "properties": {
+              "email": {
+                "type": "string",
+                "maxLength": 254,
+                "format": "email"
+              },
+              "method": {
+                "default": "email",
+                "type": "string",
+                "enum": [
+                  "email",
+                  "link",
+                  "both"
+                ]
+              }
+            },
+            "description": "The JSON request body."
+          }
+        },
+        "required": [
+          "contactId",
+          "body"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "set_launchpad_mentor_settings",
+      "title": "Set mentor availability",
+      "description": "Set whether a mentor contact is available for auto-assign and the most projects they take (null for no cap).",
+      "endpoint": "launchpadMentorSettings",
+      "method": "PUT",
+      "path": "/api/buildspace-launchpad/mentors/:contactId/settings",
+      "minRole": "officer",
+      "queryKeys": [],
+      "fieldKeys": [],
+      "multipart": "",
+      "response": "json",
+      "annotations": {
+        "title": "Set mentor availability",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contactId": {
+            "type": "string",
+            "description": "The contactId id (from a list_* or search result)."
+          },
+          "body": {
+            "type": "object",
+            "properties": {
+              "available": {
+                "type": "boolean"
+              },
+              "maxProjects": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 50
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "available",
+              "maxProjects"
+            ],
+            "description": "The JSON request body."
+          }
+        },
+        "required": [
+          "contactId",
+          "body"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "preview_launchpad_mentor_assignment",
+      "title": "Preview mentor auto-assign",
+      "description": "Propose mentor assignments for a cohort's projects without saving anything. Review them with the officer, then apply with apply_launchpad_mentor_assignment.",
+      "endpoint": "launchpadAutoAssignPreview",
+      "method": "POST",
+      "path": "/api/buildspace-launchpad/cohorts/:id/auto-assign/preview",
+      "minRole": "officer",
+      "queryKeys": [],
+      "fieldKeys": [],
+      "multipart": "",
+      "response": "json",
+      "annotations": {
+        "title": "Preview mentor auto-assign",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The record id (from a list_* or search result)."
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "apply_launchpad_mentor_assignment",
+      "title": "Apply mentor assignments",
+      "description": "Save mentor assignments for projects in a cohort (usually the preview, possibly edited).",
+      "endpoint": "launchpadAutoAssign",
+      "method": "POST",
+      "path": "/api/buildspace-launchpad/cohorts/:id/auto-assign",
+      "minRole": "officer",
+      "queryKeys": [],
+      "fieldKeys": [],
+      "multipart": "",
+      "response": "json",
+      "annotations": {
+        "title": "Apply mentor assignments",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The record id (from a list_* or search result)."
+          },
+          "body": {
+            "type": "object",
+            "properties": {
+              "assignments": {
+                "minItems": 1,
+                "maxItems": 500,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "projectId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    },
+                    "mentorId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    }
+                  },
+                  "required": [
+                    "projectId",
+                    "mentorId"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "assignments"
+            ],
+            "description": "The JSON request body."
+          }
+        },
+        "required": [
+          "id",
+          "body"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "archive_launchpad_project",
+      "title": "Archive Launchpad project",
+      "description": "Archive a Launchpad project (hidden from the board; restore_launchpad_project brings it back).",
+      "endpoint": "launchpadProjectArchive",
+      "method": "POST",
+      "path": "/api/buildspace-launchpad/projects/:id/archive",
+      "minRole": "officer",
+      "queryKeys": [],
+      "fieldKeys": [],
+      "multipart": "",
+      "response": "json",
+      "annotations": {
+        "title": "Archive Launchpad project",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The record id (from a list_* or search result)."
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "restore_launchpad_project",
+      "title": "Restore Launchpad project",
+      "description": "Restore an archived Launchpad project.",
+      "endpoint": "launchpadProjectRestore",
+      "method": "POST",
+      "path": "/api/buildspace-launchpad/projects/:id/restore",
+      "minRole": "officer",
+      "queryKeys": [],
+      "fieldKeys": [],
+      "multipart": "",
+      "response": "json",
+      "annotations": {
+        "title": "Restore Launchpad project",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The record id (from a list_* or search result)."
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "delete_launchpad_project",
+      "title": "Delete Launchpad project",
+      "description": "Permanently delete a Launchpad project. Ask the officer to confirm first; archiving is usually what they want. Requires the director role.",
+      "endpoint": "launchpadProjectDelete",
+      "method": "DELETE",
+      "path": "/api/buildspace-launchpad/projects/:id",
+      "minRole": "director",
+      "queryKeys": [],
+      "fieldKeys": [],
+      "multipart": "",
+      "response": "json",
+      "annotations": {
+        "title": "Delete Launchpad project",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The record id (from a list_* or search result)."
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "archive_launchpad_person",
+      "title": "Archive Launchpad person",
+      "description": "Archive a Launchpad participant (restore_launchpad_person brings them back).",
+      "endpoint": "launchpadPersonArchive",
+      "method": "POST",
+      "path": "/api/buildspace-launchpad/people/:id/archive",
+      "minRole": "officer",
+      "queryKeys": [],
+      "fieldKeys": [],
+      "multipart": "",
+      "response": "json",
+      "annotations": {
+        "title": "Archive Launchpad person",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The record id (from a list_* or search result)."
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "restore_launchpad_person",
+      "title": "Restore Launchpad person",
+      "description": "Restore an archived Launchpad participant.",
+      "endpoint": "launchpadPersonRestore",
+      "method": "POST",
+      "path": "/api/buildspace-launchpad/people/:id/restore",
+      "minRole": "officer",
+      "queryKeys": [],
+      "fieldKeys": [],
+      "multipart": "",
+      "response": "json",
+      "annotations": {
+        "title": "Restore Launchpad person",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The record id (from a list_* or search result)."
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "delete_launchpad_person",
+      "title": "Delete Launchpad person",
+      "description": "Permanently delete a Launchpad participant. Ask the officer to confirm first; archiving is usually what they want. Requires the director role.",
+      "endpoint": "launchpadPersonDelete",
+      "method": "DELETE",
+      "path": "/api/buildspace-launchpad/people/:id",
+      "minRole": "director",
+      "queryKeys": [],
+      "fieldKeys": [],
+      "multipart": "",
+      "response": "json",
+      "annotations": {
+        "title": "Delete Launchpad person",
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The record id (from a list_* or search result)."
+          }
+        },
+        "required": [
+          "id"
         ],
         "additionalProperties": false
       }

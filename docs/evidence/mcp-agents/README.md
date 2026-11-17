@@ -49,7 +49,7 @@ Each step has four screenshots: `-{phone,desktop}-{light,dark}`.
 | Every tool, live, as leadership, director and officer | `all-tools-{leadership,director,officer}.png` |
 | Wrong or missing arguments, `..` ids, oversized and wrong-type files | `arguments.png` |
 | Transport: parse errors, batches (max 20), notifications, protocol header, `/mcp/` | `transport.png` |
-| 200 parallel calls on one connection | `concurrency.png` |
+| 120 parallel calls on one connection, then 429 (per-agent rate limit) | `concurrency.png` |
 | Revocation: disconnect, and deactivation by a director | `revocation.png` |
 
 ## Real clients

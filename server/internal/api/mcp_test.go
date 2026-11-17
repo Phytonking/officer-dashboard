@@ -645,10 +645,11 @@ func TestMCPReviewFixes(t *testing.T) {
 		}
 	}
 
-	// Invites hand out sign-up links, a credential: no invite tools at all.
+	// Officer invites hand out sign-up links, a credential: no officer-invite tools at all
+	// (Launchpad invites go by email only through an agent: TestMCPLaunchpadTools).
 	for _, tool := range mcpTools {
-		if strings.Contains(tool.Path, "/invites") {
-			t.Fatalf("%s exposes invites", tool.Name)
+		if strings.HasPrefix(tool.Path, "/api/invites") {
+			t.Fatalf("%s exposes officer invites", tool.Name)
 		}
 	}
 }
@@ -735,4 +736,118 @@ func TestMCPRateLimitPerAgent(t *testing.T) {
 	}
 	expectStatus(t, "batch within budget", e.do("POST", "/mcp", batch[:10], bearer(at)), 200)
 	limited("after batch", at)
+}
+
+// #83's officer Launchpad endpoints are tools; the builder/mentor portal is not, and the
+// wall between portal accounts and officers' agents holds both ways.
+func TestMCPLaunchpadTools(t *testing.T) {
+	m := &fakeMailer{}
+	e := newEnv(t, func(c *Config) { c.Mailer = m })
+	_, ot := connectAgent(t, e, "user-priya", "Claude Code") // officer
+	_, dt := connectAgent(t, e, "user-director", "Claude Code")
+	officer, director := ot.str("access_token"), dt.str("access_token")
+
+	// No tool reaches the portal (and none is outside /api).
+	for _, tool := range mcpTools {
+		if !strings.HasPrefix(tool.Path, "/api/") || strings.HasPrefix(tool.Path, "/api/portal") {
+			t.Fatalf("%s maps to %s", tool.Name, tool.Path)
+		}
+	}
+	// Director-only Launchpad tools are hidden from an officer's agent and refused on call.
+	listed := toolNames(mcpRPC(e, officer, "tools/list", nil))
+	for _, name := range []string{"buildspace_overview", "invite_launchpad_builders", "archive_launchpad_project", "preview_launchpad_mentor_assignment", "set_launchpad_mentor_settings"} {
+		if !listed[name] {
+			t.Fatalf("officer's agent is missing %s", name)
+		}
+	}
+	for _, name := range []string{"create_launchpad_cohort", "delete_launchpad_cohort", "delete_launchpad_project", "invite_launchpad_mentor", "disable_launchpad_account"} {
+		if listed[name] {
+			t.Fatalf("officer's agent is offered director-only %s", name)
+		}
+	}
+	if !toolNames(mcpRPC(e, director, "tools/list", nil))["delete_launchpad_cohort"] {
+		t.Fatal("director's agent is missing delete_launchpad_cohort")
+	}
+	if text, isErr := toolCall(e, officer, "delete_launchpad_cohort", map[string]any{"id": "cohort-spring-2026"}); !isErr || !strings.Contains(text, "Not allowed") {
+		t.Fatalf("officer deleted a cohort: %v %s", isErr, text)
+	}
+	if e.scalar(`SELECT count(*) FROM buildspace_launchpad_cohorts WHERE id='cohort-spring-2026'`).(int64) != 1 {
+		t.Fatal("cohort is gone")
+	}
+
+	// An officer Launchpad tool works through /mcp, attributed to the agent.
+	if text, isErr := toolCall(e, officer, "buildspace_overview", map[string]any{"cohort": "cohort-spring-2026"}); isErr || !strings.Contains(text, "bs-lumen") {
+		t.Fatalf("overview: %v %s", isErr, text)
+	}
+	if text, isErr := toolCall(e, officer, "archive_launchpad_project", map[string]any{"id": "bs-moss"}); isErr {
+		t.Fatalf("archive: %s", text)
+	}
+	if e.scalar(`SELECT count(*) FROM audit_log WHERE entity_id='bs-moss' AND actor_user_id='user-priya' AND actor_agent_id IS NOT NULL`).(int64) == 0 {
+		t.Fatal("archive not attributed to the agent")
+	}
+	if text, isErr := toolCall(e, officer, "restore_launchpad_project", map[string]any{"id": "bs-moss"}); isErr {
+		t.Fatalf("restore: %s", text)
+	}
+	if text, isErr := toolCall(e, director, "create_launchpad_cohort", map[string]any{"body": map[string]any{"name": "Winter 2027", "startsOn": "2027-01-05"}}); isErr || !strings.Contains(text, "Winter 2027") {
+		t.Fatalf("director's agent creates a cohort: %v %s", isErr, text)
+	}
+
+	// Invites through an agent go by email only; a sign-up link never reaches the agent.
+	inv := func(method string) (string, bool) {
+		return toolCall(e, officer, "invite_launchpad_builders", map[string]any{"id": "cohort-fall-2026", "body": map[string]any{"invites": []any{map[string]any{"email": "agent.invite@uw.edu"}}, "method": method}})
+	}
+	for _, method := range []string{"link", "both"} {
+		if text, isErr := inv(method); !isErr || !strings.Contains(text, "email only") {
+			t.Fatalf("method %s: %v %s", method, isErr, text)
+		}
+	}
+	text, isErr := inv("email")
+	if isErr || strings.Contains(text, "/launchpad/join") || !strings.Contains(text, `"links":[]`) {
+		t.Fatalf("email invite: %v %s", isErr, text)
+	}
+	e.srv.WaitBackground()
+	if len(m.all()) != 1 {
+		t.Fatalf("invite mails: %d", len(m.all()))
+	}
+	var accountID string
+	if err := e.db.R.QueryRow(`SELECT id FROM buildspace_launchpad_accounts WHERE email='agent.invite@uw.edu'`).Scan(&accountID); err != nil {
+		t.Fatal(err)
+	}
+	if text, isErr := toolCall(e, officer, "resend_launchpad_invite", map[string]any{"id": accountID}); isErr || strings.Contains(text, "/launchpad/join") || !strings.Contains(text, `"link":null`) {
+		t.Fatalf("resend: %v %s", isErr, text)
+	}
+	// The same calls from the dashboard still hand back the link.
+	if r := e.mustOK(e.post("/api/buildspace-launchpad/accounts/"+accountID+"/resend", nil, e.officer())); !strings.Contains(string(r.Raw), "/launchpad/join") {
+		t.Fatalf("dashboard resend lost its link: %s", r.Raw)
+	}
+
+	// The wall: a portal session never reaches /mcp or the consent page, and a bearer token
+	// never authenticates a portal route.
+	portal := e.portalLogin("lp-account-alex")
+	expectStatus(t, "portal cookie on /mcp", e.do("POST", "/mcp", map[string]any{"jsonrpc": "2.0", "id": 1, "method": "ping"}, portal), 401)
+	expectStatus(t, "bearer on the portal", e.get("/api/portal/me", bearer(officer)), 401)
+	expectStatus(t, "bearer on the builder portal", e.get("/api/portal/builder", bearer(officer)), 401)
+	cid := registerClient(t, e, "Portal probe")
+	_, challenge := pkcePair()
+	q := authorizeForm(cid, challenge, "allow")
+	q.Del("decision")
+	if r := e.get("/oauth/authorize?"+q.Encode(), portal); r.Status != 302 || !strings.HasPrefix(r.Header.Get("Location"), "/login?") {
+		t.Fatalf("portal session at consent: %d %s", r.Status, r.Header.Get("Location"))
+	}
+	if r := e.do("POST", "/oauth/authorize", authorizeForm(cid, challenge, "allow"), loopback(portal)); r.Status != 401 || r.Header.Get("Location") != "" {
+		t.Fatalf("portal session allowed an agent: %d %s", r.Status, r.Header.Get("Location"))
+	}
+}
+
+// Without invite email configured, an agent cannot invite at all (it would need the link).
+func TestMCPLaunchpadInviteNeedsMailer(t *testing.T) {
+	e := newEnv(t)
+	_, tok := connectAgent(t, e, "user-priya", "Claude Code")
+	text, isErr := toolCall(e, tok.str("access_token"), "invite_launchpad_builders", map[string]any{"id": "cohort-fall-2026", "body": map[string]any{"invites": []any{map[string]any{"email": "x.y@uw.edu"}}}})
+	if !isErr || !strings.Contains(text, "not configured") || strings.Contains(text, "/launchpad/join") {
+		t.Fatalf("%v %s", isErr, text)
+	}
+	if e.scalar(`SELECT count(*) FROM buildspace_launchpad_accounts WHERE email='x.y@uw.edu'`).(int64) != 0 {
+		t.Fatal("an account was created anyway")
+	}
 }

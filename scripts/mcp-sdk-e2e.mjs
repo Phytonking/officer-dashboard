@@ -111,6 +111,17 @@ log('validation error surfaces →', bad.isError, text(bad).slice(0, 110).replac
 const forbidden = await client.callTool({ name: 'approve_purchase_request', arguments: { id: 'req-0005', body: {} } });
 log('approve_purchase_request →', forbidden.isError ? 'refused: ' + text(forbidden).slice(0, 90) : 'APPROVED');
 
+const lp = JSON.parse(text(await client.callTool({ name: 'buildspace_overview', arguments: { cohort: 'cohort-fall-2026' } })));
+log('buildspace_overview(fall cohort) →', lp.cohorts.length, 'cohorts,', lp.projects.length, 'projects,', lp.mentors.length, 'mentors');
+const plan = await client.callTool({ name: 'preview_launchpad_mentor_assignment', arguments: { id: 'cohort-fall-2026' } });
+if (plan.isError) throw new Error('preview_launchpad_mentor_assignment: ' + text(plan));
+log('preview_launchpad_mentor_assignment →', JSON.parse(text(plan)).assignments.length, 'proposed');
+if (AS === 'officer') {
+  const del = await client.callTool({ name: 'delete_launchpad_cohort', arguments: { id: 'cohort-spring-2026' } });
+  log('delete_launchpad_cohort (director-only) →', del.isError ? 'refused: ' + text(del).slice(0, 90) : 'DELETED');
+  if (!del.isError) throw new Error('an officer agent deleted a cohort');
+}
+
 const search = JSON.parse(text(await client.callTool({ name: 'search', arguments: { q: 'Agent' } })));
 log('search("Agent") →', (search.results ?? search.items ?? []).map((r) => `${r.kind}:${r.title ?? r.name}`).join(', '));
 

@@ -559,11 +559,34 @@ async function sweep(api: APIRequestContext, token: string, role: string) {
   await call('get_officer_activity', { id: 'user-priya' });
   await call('update_officer', { id: 'user-priya', body: { title: 'VP Events' } }, 2);
   await call('buildspace_overview');
-  await call('save_buildspace_project', { id: `bs-sweep-${role}`, body: { name: 'Sweep Project', description: 'd', track: 'Software', stage: 'Building', links: [], mentorIds: [] } });
+  await call('save_buildspace_project', { id: `bs-sweep-${role}`, body: { name: 'Sweep Project', description: 'd', track: 'Software', stage: 'Building', links: [], mentorIds: [], cohortId: 'cohort-fall-2026' } });
   await call('save_buildspace_person', { id: `bs-sweep-person-${role}`, body: { name: 'Sweep Person', projectId: `bs-sweep-${role}`, joinedOn: '2026-11-01' } });
   await call('log_buildspace_activity', { body: { projectId: `bs-sweep-${role}`, personId: `bs-sweep-person-${role}`, kind: 'request', date: '2026-11-15', body: 'stuck', status: 'open' } });
   await call('resolve_buildspace_activity', { id: 'bs-a2' }, 1, /resolved|Only requests/);
   await call('set_buildspace_schedule', { body: { dueWeekday: 5, dueTime: '17:00' } }, 3);
+  // Launchpad cohorts, accounts and mentor roster (#83). The dev server has no invite email,
+  // so the invite tools answer "not configured": through an agent invites are email-only.
+  const cohort = await call('create_launchpad_cohort', { body: { name: `Sweep ${role} ${stamp}`, startsOn: '2027-01-05' } }, 2);
+  const cohortId = cohort.json?.cohort?.id ?? 'no-such-cohort';
+  await call('update_launchpad_cohort', { id: cohortId, body: { endsOn: '2027-03-20' } }, 2);
+  await call('invite_launchpad_builders', { id: 'cohort-fall-2026', body: { invites: [{ email: `sweep.${role}@uw.edu` }] } }, 1, /not configured/);
+  await call('resend_launchpad_invite', { id: 'lp-invite-sky' }, 1, /not configured/);
+  await call('revoke_launchpad_invite', { id: 'lp-invite-dev' }, 1, /not found/i);
+  await call('disable_launchpad_account', { id: 'lp-account-maya' }, 2);
+  await call('enable_launchpad_account', { id: 'lp-account-maya' }, 2);
+  await call('invite_launchpad_mentor', { contactId: 'bs-mentor-maya', body: {} }, 2, /not configured/);
+  await call('set_launchpad_mentor_settings', { contactId: 'bs-mentor-maya', body: { available: true, maxProjects: null } });
+  const plan = await call('preview_launchpad_mentor_assignment', { id: 'cohort-fall-2026' });
+  await call('apply_launchpad_mentor_assignment', { id: 'cohort-fall-2026', body: { assignments: plan.json?.assignments?.length ? plan.json.assignments : [{ projectId: `bs-sweep-${role}`, mentorId: 'bs-mentor-maya' }] } }, 1, /out of date/);
+  await call('save_buildspace_person', { id: `bs-sweep-del-${role}`, body: { name: 'Sweep Delete', projectId: `bs-sweep-${role}`, joinedOn: '2026-11-01' } });
+  await call('archive_launchpad_person', { id: `bs-sweep-person-${role}` });
+  await call('restore_launchpad_person', { id: `bs-sweep-person-${role}` });
+  await call('delete_launchpad_person', { id: `bs-sweep-del-${role}` }, 2);
+  await call('archive_launchpad_project', { id: `bs-sweep-${role}` });
+  await call('restore_launchpad_project', { id: `bs-sweep-${role}` });
+  await call('save_buildspace_project', { id: `bs-sweep-del-${role}`, body: { name: 'Sweep Delete', description: 'd', track: 'Software', stage: 'Ideating', links: [], mentorIds: [], cohortId: 'cohort-fall-2026' } });
+  await call('delete_launchpad_project', { id: `bs-sweep-del-${role}` }, 2);
+  await call('delete_launchpad_cohort', { id: cohortId }, 2);
   const prof = await call('get_my_profile');
   await call('update_my_profile', { body: { phone: '+1 206 555 0100', birthday: '01-15', subteamId: prof.json?.profile?.subteamId ?? undefined } }, 1, /subteam/i);
   await call('delete_event', { id: evId });
@@ -635,20 +658,25 @@ test('transport: JSON-RPC shapes, batches, protocol header, trailing slash', asy
   }
 });
 
-test('concurrency: 200 parallel tool calls on one connection', async ({ page, baseURL }) => {
+test('concurrency and rate limit: 120 parallel calls, then 429 for that agent only', async ({ page, baseURL }) => {
   desktopOnly();
-  const ev = new Evidence('concurrency', '200 parallel calls, reads and writes', 'One agent fires 200 tool calls at once: 150 reads and 50 contact creations.');
+  const ev = new Evidence('concurrency', '120 parallel calls, then the per-agent rate limit', 'One agent fires its whole budget at once: 90 reads and 30 contact creations (120 calls, the per-connection limit per minute). Its next calls get 429 with Retry-After; another agent of the same officer is unaffected.');
   try {
     const a = await connectAgent(baseURL!, 'director', 'Stress');
+    const other = await connectAgent(baseURL!, 'director', 'Stress (second agent)');
     const tag = `Stress ${Date.now()}`;
     const t0 = Date.now();
-    const rs = await Promise.all(Array.from({ length: 200 }, (_, i) => (i % 4 === 0 ? tool(a.browser, a.access, 'create_contact', { body: { name: `${tag} ${i}`, type: 'speaker' } }) : tool(a.browser, a.access, ['list_events', 'whoami', 'search', 'list_design_requests'][i % 4]!, i % 4 === 2 ? { q: 'hack' } : {}))));
+    const rs = await Promise.all(Array.from({ length: 120 }, (_, i) => (i % 4 === 0 ? tool(a.browser, a.access, 'create_contact', { body: { name: `${tag} ${i}`, type: 'speaker' } }) : tool(a.browser, a.access, ['list_events', 'whoami', 'search', 'list_design_requests'][i % 4]!, i % 4 === 2 ? { q: 'hack' } : {}))));
     const ms = Date.now() - t0;
     const errs = rs.filter((r) => r.isError);
-    const listed = await tool(a.browser, a.access, 'list_contacts', { q: tag });
-    ev.step({ label: 'result', request: '200 × tools/call in parallel', body: { calls: rs.length, errors: errs.length, milliseconds: ms, contactsCreated: listed.json.items.length } });
-    ev.check(errs.length === 0, 'no call failed');
-    ev.check(listed.json.items.length === 50, 'all 50 writes landed exactly once');
+    const over = await rpc(a.browser, a.access, { jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'whoami', arguments: {} } });
+    const listed = await tool(other.browser, other.access, 'list_contacts', { q: tag });
+    ev.step({ label: 'result', request: '120 × tools/call in parallel', body: { calls: rs.length, errors: errs.length, milliseconds: ms, contactsCreated: listed.json?.items?.length } });
+    ev.step({ label: 'call 121', request: 'tools/call whoami', status: over.status, ok: over.status === 429, body: { 'retry-after': over.headers['retry-after'], error: over.json?.error } });
+    ev.check(errs.length === 0, 'no call within the budget failed');
+    ev.check(listed.json?.items?.length === 30, 'all 30 writes landed exactly once');
+    ev.check(over.status === 429 && Number(over.headers['retry-after']) >= 1 && over.json?.error?.code === -32000 && over.json?.id === 9, 'call 121 gets 429, Retry-After and a JSON-RPC error');
+    ev.check(!listed.isError, "the officer's second agent has its own budget");
   } finally {
     await ev.render(page);
   }
@@ -717,6 +745,9 @@ const GO_TESTS = [
   'TestPurgeOAuth',
   'TestMCPReviewFixes',
   'TestOAuthRefreshReuseRevokes',
+  'TestMCPRateLimitPerAgent',
+  'TestMCPLaunchpadTools',
+  'TestMCPLaunchpadInviteNeedsMailer',
 ];
 
 for (const name of GO_TESTS) {
