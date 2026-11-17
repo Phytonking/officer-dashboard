@@ -594,6 +594,8 @@ export type PurchaseSettlement = z.infer<typeof PurchaseSettlement>;
  * PurchaseSettlement; the others take an optional comment.
  */
 export const PurchaseTransitionRequest = z.discriminatedUnion('to', [
+  // Back from being bought (purchase fell through or a stale agent claim); not a decision.
+  z.object({ to: z.literal('approved'), comment: TransitionComment }),
   z.object({ to: z.literal('fulfilling'), comment: TransitionComment }),
   PurchaseSettlement.extend({ to: z.literal('fulfilled') }),
   PurchaseSettlement.extend({ to: z.literal('reimbursed') }),
@@ -1148,7 +1150,7 @@ export const DesignUrgency = z.enum(['normal', 'high']);
 export const DesignFileKind = z.enum(['reference', 'review', 'delivered']);
 export type DesignFileKind = z.infer<typeof DesignFileKind>;
 
-export const DesignEventRef = z.object({ id: Id, name: z.string(), startsAt: z.string() });
+export const DesignEventRef = z.object({ id: Id, name: z.string(), startsAt: z.string(), status: EventStatus });
 export const DesignRequestItem = z.object({
   id: Id,
   title: z.string(),

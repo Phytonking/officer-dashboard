@@ -86,3 +86,21 @@ func TestDesignUpcomingEvents(t *testing.T) {
 	e.mustOK(e.post("/api/events", map[string]any{"name": "Y", "startsAt": "2026-11-22T18:00:00-08:00", "designNeed": "not_needed", "hostUserId": "user-priya"}, priya))
 	expectStatus(t, "unknown event", e.do("PUT", "/api/events/nope/design-need", map[string]any{"designNeed": "needed"}, priya), 404)
 }
+
+// Home's Upcoming tile counts what is on the calendar: drafts and cancelled events are left out,
+// as on the Events page.
+func TestOverviewUpcomingSkipsDraftsAndCancelled(t *testing.T) {
+	e := newEnv(t)
+	d := e.director()
+	count := func() float64 {
+		n, _ := e.mustOK(e.get("/api/overview", e.officer())).at("kpis", "upcomingEvents").(float64)
+		return n
+	}
+	base := count()
+	for i, status := range []string{"draft", "cancelled", "published"} {
+		e.mustOK(e.post("/api/events", map[string]any{"name": "Upcoming " + status, "startsAt": "2026-12-0" + string(rune('1'+i)) + "T18:00:00Z", "status": status}, d))
+	}
+	if got := count(); got != base+1 {
+		t.Fatalf("upcomingEvents %v, want %v (only the published event)", got, base+1)
+	}
+}

@@ -211,7 +211,7 @@ function Body({ data, me, onUpdate, onDeleted, onRefresh }: { data: DesignReques
         </div>
         <div>
           <dt>{r.event ? 'Event' : 'Program'}</dt>
-          <dd>{r.event ? <a href={href.event(r.event.id)}>{r.event.name}</a> : r.program ?? 'Not linked'}</dd>
+          <dd>{r.event ? <><a href={href.event(r.event.id)}>{r.event.name}</a>{r.event.status === 'cancelled' && ' (event cancelled)'}</> : r.program ?? 'Not linked'}</dd>
         </div>
         <div>
           <dt>Formats</dt>

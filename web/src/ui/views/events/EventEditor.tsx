@@ -117,8 +117,19 @@ function EditorForm({
   const user = me.status === 'ready' ? me.user : null;
   // Ruling an event out of design is director+ or the host's call (the server checks the saved host).
   const canSkipDesign = isDirector(user) || (!!user && (event ? event.host?.id === user.id : d.hostUserId === user.id));
+  // Once an event has a host, only that host or a director+ changes it (the server checks too).
+  const canChangeHost = !event?.host || isDirector(user) || event.host.id === user?.id;
   const savedNeed = event?.designNeed ?? 'unknown';
-  const set = (k: keyof Draft) => (e: Event) => setD({ ...d, [k]: (e.currentTarget as HTMLInputElement).value });
+  const hostTouched = useRef(false);
+  const set = (k: keyof Draft) => (e: Event) => {
+    if (k === 'hostUserId') hostTouched.current = true;
+    setD({ ...d, [k]: (e.currentTarget as HTMLInputElement).value });
+  };
+  // Whoever creates an event usually hosts it: preselect them (they can pick someone else or
+  // "No one yet"), which also lets them rule the event out of design without a director.
+  useEffect(() => {
+    if (!event && user && !hostTouched.current) setD((cur) => (cur.hostUserId ? cur : { ...cur, hostUserId: user.id }));
+  }, [event, user?.id]);
 
   useEffect(() => {
     if (!cover) return setPreview(null);
@@ -256,7 +267,14 @@ function EditorForm({
             </select>
           </Field>
           <Field id="ev-host" label="Host officer" error={errors.hostUserId} optional>
-            <select class="select" value={d.hostUserId} onChange={set('hostUserId')} {...describe('ev-host', errors.hostUserId)}>
+            <select
+              class="select"
+              value={d.hostUserId}
+              onChange={set('hostUserId')}
+              disabled={!canChangeHost}
+              title={canChangeHost ? undefined : 'Only the host or a director can hand this event to someone else.'}
+              {...describe('ev-host', errors.hostUserId)}
+            >
               <option value="">No one yet</option>
               {lookups.hosts.map((u) => (
                 <option value={u.id} key={u.id}>

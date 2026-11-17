@@ -50,7 +50,7 @@ export default function KpiWidget({ id, size, me, overview }: WidgetProps) {
   const now = Date.now();
   // recentEvents is newest first; past events oldest → newest for the sparklines.
   const past = d.recentEvents.filter((e) => new Date(e.startsAt).getTime() <= now).reverse();
-  const upcoming = d.recentEvents.filter((e) => new Date(e.startsAt).getTime() > now).sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+  const upcoming = d.recentEvents.filter((e) => e.status !== 'draft' && e.status !== 'cancelled' && new Date(e.startsAt).getTime() > now).sort((a, b) => a.startsAt.localeCompare(b.startsAt));
   const empty = (line: string) => card(<WidgetEmpty icon={def?.icon ?? 'blocks'} size={size}>{line}</WidgetEmpty>);
 
   switch (id) {

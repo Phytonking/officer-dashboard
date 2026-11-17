@@ -11,7 +11,9 @@ function EventRow({ e, rich }: { e: EventListItem; rich: boolean }) {
   const m = e.metrics;
   const date = shortDay(pacificParts(e.startsAt).date);
   const upcoming = new Date(e.startsAt).getTime() > Date.now();
-  const checked = upcoming ? 'upcoming' : m.checkInRate === null ? 'no check-ins' : `${pct(m.checkInRate)} checked in`;
+  // A cancelled or draft event isn't "upcoming" (it isn't on the calendar): say what it is.
+  const checked =
+    e.status === 'cancelled' ? 'cancelled' : e.status === 'draft' ? 'draft' : upcoming ? 'upcoming' : m.checkInRate === null ? 'no check-ins' : `${pct(m.checkInRate)} checked in`;
   const meta = rich
     ? <Meta parts={[date, e.location, `${m.registered} guests`, !upcoming && m.reflectionRate !== null && `${pct(m.reflectionRate)} reflected`]} />
     : <Meta parts={[date, checked]} />;

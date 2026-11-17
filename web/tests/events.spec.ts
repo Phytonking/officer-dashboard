@@ -75,6 +75,23 @@ test('events: draft, handoff kit, Luma link, request design, delete', async ({ p
   expect(errors).toEqual([]);
 });
 
+test('events: a new event is hosted by its creator, who may then rule out design', async ({ page }) => {
+  const errors = watchErrors(page);
+  await devLogin(page, 'officer');
+  const me = await page.request.get('/api/me').then((r) => r.json());
+  await page.goto('/events');
+  await settle(page);
+  await page.locator('[data-new-event]').click();
+  const editor = openDialog(page);
+  await expect(editor.getByLabel(/^Host officer/)).toHaveValue(me.user.id);
+  await expect(editor.getByLabel('Needs design')).toBeEnabled();
+  // Choosing "No one yet" sticks, and only a director or the host can rule out design.
+  await editor.getByLabel(/^Host officer/).selectOption('');
+  await expect(editor.getByLabel(/^Host officer/)).toHaveValue('');
+  await expect(editor.getByLabel('Needs design')).toBeDisabled();
+  expect(errors).toEqual([]);
+});
+
 test('events: month and week calendars place events on the Pacific wall clock', async ({ page }, info) => {
   const errors = watchErrors(page);
   await devLogin(page, 'officer');

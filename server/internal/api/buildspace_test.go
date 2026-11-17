@@ -75,8 +75,24 @@ func TestBuildspaceMembershipActivityAndValidation(t *testing.T) {
 	for _, v := range readBuildspace(t, e).Activity {
 		if v.ProjectID == "test-project" && v.Kind == "request" {
 			e.mustOK(e.post("/api/buildspace-launchpad/activity/"+v.ID+"/resolve", nil, officer))
+			// A second officer resolving the same request is refused, not audited again.
+			expectStatus(t, "already resolved", e.post("/api/buildspace-launchpad/activity/"+v.ID+"/resolve", nil, e.as("user-marcus")), 409)
 		}
 	}
+	a["status"] = "needs-help"
+	e.mustOK(e.post("/api/buildspace-launchpad/activity", a, officer))
+	for _, v := range readBuildspace(t, e).Activity {
+		if v.ProjectID == "test-project" && v.Kind == "request" && v.Status == "needs-help" {
+			expectStatus(t, "not open", e.post("/api/buildspace-launchpad/activity/"+v.ID+"/resolve", nil, officer), 409)
+		}
+	}
+	// A contact retyped away from mentor keeps the project it already mentors but can't be newly assigned.
+	e.mustOK(e.do("PATCH", "/api/contacts/bs-mentor-maya", map[string]any{"type": "speaker"}, officer))
+	p["links"] = []string{"https://example.org"}
+	p["mentorIds"] = []string{"bs-mentor-maya"}
+	e.mustOK(e.do("PUT", "/api/buildspace-launchpad/projects/test-project", p, officer))
+	p2 := with(p, "name", "Other project")
+	expectStatus(t, "speaker as new mentor", e.do("PUT", "/api/buildspace-launchpad/projects/other-project", p2, officer), 400)
 	person["projectId"] = "bs-moss"
 	expectStatus(t, "history protected", e.do("PUT", "/api/buildspace-launchpad/people/test-person", person, officer), 409)
 }

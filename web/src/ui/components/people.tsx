@@ -203,18 +203,21 @@ export function RoleToggle<K extends string>({
   value,
   options,
   disabled,
+  hint,
   onChange,
 }: {
   label: string;
   value: K;
   options: { key: K; label: string; hue: Hue }[];
   disabled?: boolean;
+  /** Why the toggle is disabled, shown on hover (e.g. "Only leadership can change roles"). */
+  hint?: string;
   onChange: (k: K) => void;
 }) {
   return (
     <span class="role-toggle" role="group" aria-label={label}>
       {options.map((o) => (
-        <button type="button" key={o.key} class="role-toggle-opt" data-hue={o.hue} aria-pressed={value === o.key} disabled={disabled} onClick={() => value !== o.key && onChange(o.key)}>
+        <button type="button" key={o.key} class="role-toggle-opt" data-hue={o.hue} aria-pressed={value === o.key} disabled={disabled} title={disabled ? hint : undefined} onClick={() => value !== o.key && onChange(o.key)}>
           {o.label}
         </button>
       ))}

@@ -161,7 +161,7 @@ literal) against:
 | `event` | officers, directors | name, location, Luma id | name / `<Pacific date> · <location>` | `/events?id=<id>` |
 | `request` | officers, directors | number, title, vendor | title / `<number> · <vendor> · <status>` | `/finance?id=<id>` |
 | `contact` | all officers | name, organization, role, email, topics | name / `<org> · <role> · <type>` | `/contacts?id=<id>` |
-| `user` | directors only | name, email, title | name / `<title> · <role> · <email>` | `/admin` |
+| `user` | directors only | name, email, title | name / `<title> · <role> · <email>` | `/officers?person=<id>` |
 | `account` | directors only | code, name | `<code> <name>` / account type | `/finance?tab=reports&report=trial-balance` |
 
 Results are ordered best match first (the primary field starts with the query, then contains
@@ -208,6 +208,12 @@ is `{ "results": [] }`. A missing or blank `q`, or a `limit` outside 1–50, is 
   uploaded to the request.
 - **Approve** enqueues a `fulfillment_jobs` row for club purchases and sends a Discord
   notification; submit / deny / fulfilled also notify.
+- **Back to approved.** A director other than the requester can send a request being bought
+  (`fulfilling`) back with `POST /api/requests/:id/transition {"to":"approved"}` (the purchase fell
+  through, or an agent claim went stale). Its held or claimed job is cancelled, never re-queued, so
+  nothing is bought twice. `to: "approved"` on any other status is 409; decisions use `/approve`.
+  The agent's queue (`GET /api/agent/jobs`) lists a queued job only while its request is `approved`.
+  Settlement amounts are capped at $1,000,000,000.00 (`actualTotalCents` ≤ 100000000000).
 - **Design requests.** Every officer sees the whole board (`GET /api/design-requests`) and
   can create a request, comment, and attach reference files. The design team is the active
   users whose officer profile is on the subteam named **Design** (migration 0008 creates it).
@@ -528,6 +534,18 @@ directors and leadership have the same event powers. Each change writes `event.c
 - **Cover.** `PUT /api/events/:id/cover` takes one image (content is checked against its
   type). It is stored in the database; `coverUrl` is `/api/events/:id/cover?v=<ms>` and
   changes when the cover does. The GET answers with `nosniff` and a sandbox CSP.
+- **Host.** New events in the UI preselect their creator as host. Once an event has a host,
+  only that host or a director+ can change `hostUserId` (403 otherwise), so the host's right to
+  mark the event as not needing design can't be taken by another officer.
+- **Luma imports find linked events.** An ingest or CSV import for Luma id `evt-…` updates the
+  event whose linked page is `https://lu.ma/event/evt-…` when no event stores that id yet,
+  instead of creating a second event.
+- **Deactivated host.** Re-sending an event's current host is accepted even after that officer
+  was deactivated, so others can still edit or cancel the event; picking an inactive host is 400.
+  Clearing the host (`hostUserId: null`) is a host change (host or director+ only).
+- **Cancelled events and design.** `DesignEventRef.status` carries the linked event's status; the
+  board marks a cancelled event and its design deadline leaves the Home calendar. A card whose due
+  date falls after a (moved) event shows "After the event"; the due date itself is not changed.
 - **Search.** `q` matches the event name or location.
 - **Delete.** Guests, reflections and the cover go with the event. An event that
   purchase requests point at answers 409 until they are moved. The published Luma event

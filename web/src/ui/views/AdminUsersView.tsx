@@ -209,6 +209,7 @@ function UserList({
                         value={u.role}
                         options={ROLE_OPTIONS}
                         disabled={!canChangeRoles || (u.isOwner && !isOwner) || busyId === u.id || !u.active}
+                        hint={!canChangeRoles ? 'Only leadership can change roles.' : u.isOwner && !isOwner ? "Only an owner can change an owner's role." : !u.active ? 'Reactivate this account to change its role.' : undefined}
                         onChange={(role) => {
                           if (!confirm(`Make ${u.name} ${role}? Only leadership can change roles.`)) return;
                           patch(u, { role }, `${u.name} is now ${ROLE_NOUN[role]}.`);

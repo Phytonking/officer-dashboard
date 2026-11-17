@@ -80,7 +80,7 @@ export default function RequestDetail({
       <RequestSummary r={r} />
 
       <div class="stack">
-        <SettlementHoldNotice hold={r.settlementHold} />
+        <SettlementHoldNotice hold={r.settlementHold} canSettle={r.allowedTransitions.some((t) => t === 'fulfilled' || t === 'reimbursed')} maxCents={r.maxSettlementCents} />
         {(created || uploadFailed > 0 || notice) && (
           <div class="notice-stack" ref={statusRef} tabIndex={-1} data-status-region>
             {created === 'submitted' && <Notice tone="positive">Submitted. A director has been notified and will review it.</Notice>}
@@ -492,7 +492,7 @@ function Actions({
         </section>
       )}
 
-      {(t.has('submitted') || t.has('fulfilling') || t.has('closed') || t.has('cancelled') || r.canEdit) && (
+      {(t.has('submitted') || t.has('fulfilling') || (r.status === 'fulfilling' && t.has('approved')) || t.has('closed') || t.has('cancelled') || r.canEdit) && (
         <div class="action-row" role="group" aria-label="Other actions">
           {t.has('submitted') && (
             <button type="button" class="btn btn--primary" disabled={!!busy} onClick={() => run('submit', () => api('requestSubmit', { params: { id: r.id } }), 'Submitted. A director has been notified.')}>
@@ -502,6 +502,19 @@ function Actions({
           {t.has('fulfilling') && (
             <button type="button" class="btn" disabled={!!busy} onClick={() => run('fulfilling', () => api('requestTransition', { params: { id: r.id }, body: { to: 'fulfilling' } }), 'Marked as being purchased.')}>
               mark as buying
+            </button>
+          )}
+          {r.status === 'fulfilling' && t.has('approved') && (
+            <button
+              type="button"
+              class="btn"
+              disabled={!!busy}
+              onClick={() => {
+                if (!confirm('Send this back to approved? Any purchasing-agent job for it is cancelled, so it is not bought twice.')) return;
+                run('unbuy', () => api('requestTransition', { params: { id: r.id }, body: { to: 'approved' } }), 'Back to approved. Buy it by hand, or cancel it.');
+              }}
+            >
+              {busy === 'unbuy' ? 'sending back…' : 'back to approved'}
             </button>
           )}
           {t.has('closed') && (

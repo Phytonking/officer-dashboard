@@ -523,6 +523,7 @@ th.people-menu, td.people-menu {width:48px;text-align:right;}
 .role-toggle-opt[aria-pressed='true'] {background:var(--surface);color:var(--text);font-weight:500;box-shadow:0 0 0 1px var(--line);}
 .role-toggle-opt[aria-pressed='true']::before {opacity:1;}
 .role-toggle-opt:hover:not([aria-pressed='true']):not(:disabled) {color:var(--text);}
+.role-toggle-opt:disabled {cursor:not-allowed;}
 .role-toggle-opt:active:not(:disabled) {transform:scale(.98);}
 .role-toggle-opt:disabled {cursor:not-allowed;}
 

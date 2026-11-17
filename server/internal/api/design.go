@@ -28,6 +28,8 @@ type DesignEventRef struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
 	StartsAt string `json:"startsAt"`
+	// Status lets designers see that the event was cancelled (the card stays until someone acts).
+	Status string `json:"status"`
 }
 
 type DesignRequestItem struct {
@@ -157,7 +159,7 @@ func (d *designCtx) item(r *store.DesignRequest, comments, files int) (DesignReq
 	}
 	if r.EventID != nil {
 		if e := d.cat.eventByID[*r.EventID]; e != nil {
-			it.Event = &DesignEventRef{ID: e.ID, Name: e.Name, StartsAt: e.StartsAt}
+			it.Event = &DesignEventRef{ID: e.ID, Name: e.Name, StartsAt: e.StartsAt, Status: e.Status}
 		}
 	}
 	return it, nil
@@ -850,12 +852,12 @@ func (c *Ctx) designFileDownload() error {
 // ─── prefill from an event (used by the Events page's "Request design") ───
 
 // designDraftFor proposes a request for an event: due a week before it starts (in
-// the effective time zone), never before today.
+// the club's time zone, since designers and the requester share the brief), never before today.
 func (s *Server) designDraftFor(ctx context.Context, userID string, e *store.Event) DesignRequestDraft {
-	d := DesignRequestDraft{Title: e.Name + " promo", Type: "social", Urgency: "normal", EventID: e.ID, Event: DesignEventRef{ID: e.ID, Name: e.Name, StartsAt: e.StartsAt}}
+	d := DesignRequestDraft{Title: e.Name + " promo", Type: "social", Urgency: "normal", EventID: e.ID, Event: DesignEventRef{ID: e.ID, Name: e.Name, StartsAt: e.StartsAt, Status: e.Status}}
 	when := ""
 	if t, err := luma.ParseInstant(e.StartsAt); err == nil {
-		zone := s.effectiveZone(ctx, userID)
+		zone := s.clubZone(ctx)
 		p := t.In(zone)
 		when = p.Format("Mon Jan 2, 3:04 PM MST")
 		// A past event gets no due date; otherwise a week ahead, but never before today.
@@ -875,7 +877,10 @@ func (s *Server) designDraftFor(ctx context.Context, userID string, e *store.Eve
 		brief += " at " + strings.TrimSpace(*e.Location)
 	}
 	d.Brief = brief + ". Include the date, time, place and RSVP link."
-	if e.URL != nil && *e.URL != "" {
+	// The linked Luma page is the RSVP link; older imported events only carry URL.
+	if e.LumaURL != nil && *e.LumaURL != "" {
+		d.Brief += fmt.Sprintf(" RSVP: %s", *e.LumaURL)
+	} else if e.URL != nil && *e.URL != "" {
 		d.Brief += fmt.Sprintf(" RSVP: %s", *e.URL)
 	}
 	d.Title = truncRunes(d.Title, 200)

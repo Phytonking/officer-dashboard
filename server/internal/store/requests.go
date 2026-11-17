@@ -459,7 +459,13 @@ func (q *Queries) InsertJob(ctx context.Context, j Job) error {
 
 // JobsByStatus lists jobs in a status, oldest first.
 func (q *Queries) JobsByStatus(ctx context.Context, status string) ([]Job, error) {
-	rows, err := q.q.QueryContext(ctx, `SELECT `+jobCols+` FROM fulfillment_jobs WHERE status = ? ORDER BY created_at, rowid`, status)
+	// A queued job is only claimable while its request is approved (a director may have moved
+	// it to "buying" by hand), so the agent's queue leaves the rest out.
+	where := `status = ?`
+	if status == "queued" {
+		where += ` AND request_id IN (SELECT id FROM purchase_requests WHERE status = 'approved')`
+	}
+	rows, err := q.q.QueryContext(ctx, `SELECT `+jobCols+` FROM fulfillment_jobs WHERE `+where+` ORDER BY created_at, rowid`, status)
 	if err != nil {
 		return nil, err
 	}

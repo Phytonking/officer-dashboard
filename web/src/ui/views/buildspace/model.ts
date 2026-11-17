@@ -7,7 +7,7 @@ import type {
 export const openActivity = (a: BuildspaceActivity) =>
   ["request", "purchase"].includes(a.kind) &&
   (a.purchaseStatus
-    ? !["denied", "fulfilled", "reimbursed", "closed"].includes(
+    ? !["denied", "cancelled", "fulfilled", "reimbursed", "closed"].includes(
         a.purchaseStatus,
       )
     : a.status === "open");

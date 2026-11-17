@@ -71,7 +71,7 @@ func (c *Ctx) search() error {
 			r.Title, r.Href = h.Primary, "/finance?id="+h.ID
 			r.Subtitle = joinNonEmpty(" · ", h.A, h.B, h.C)
 		case "user":
-			r.Title, r.Href = h.Primary, "/admin"
+			r.Title, r.Href = h.Primary, "/officers?person="+h.ID
 			r.Subtitle = joinNonEmpty(" · ", h.A, h.B, h.C)
 		case "account":
 			r.Title, r.Href = fmt.Sprintf("%s %s", h.A, h.Primary), "/finance?tab=reports&report=trial-balance"

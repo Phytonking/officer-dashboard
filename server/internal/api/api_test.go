@@ -633,7 +633,8 @@ func TestEventsListDetailMetricsCRUD(t *testing.T) {
 	id := created.str("event", "id")
 	expectStatus(t, "ends before start", e.do("PATCH", "/api/events/"+id, map[string]any{"endsAt": "2026-12-01T18:00:00-08:00"}, e.officer()), 400)
 	expectStatus(t, "unknown host", e.post("/api/events", map[string]any{"name": "x", "startsAt": "2026-12-01T19:00:00Z", "hostUserId": "nope"}, e.officer()), 400)
-	upd := e.mustOK(e.do("PATCH", "/api/events/"+id, map[string]any{"location": "Room 5", "hostUserId": nil}, e.officer()))
+	// Clearing the host is a host change: the host or a director (see TestClearingTheHostNeedsHostOrDirector).
+	upd := e.mustOK(e.do("PATCH", "/api/events/"+id, map[string]any{"location": "Room 5", "hostUserId": nil}, e.director()))
 	if upd.str("event", "location") != "Room 5" || upd.at("event", "host") != nil || upd.str("event", "name") != "Board social" {
 		t.Errorf("patched %s", upd.Raw)
 	}

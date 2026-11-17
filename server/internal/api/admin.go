@@ -68,10 +68,19 @@ func (c *Ctx) adminUserCreate() error {
 			issues.Add("subteamId", "Subteam not found")
 			return validationError(issues)
 		}
-		if _, err := w.PendingInviteByDiscordID(ctx, discordID); err == nil {
-			return conflict("That Discord account has a pending invite. Revoke it on the Officers page first, or let them accept it.")
-		} else if !errors.Is(err, store.ErrNotFound) {
+		// An expired invite can't be accepted any more, so it doesn't block adding the account.
+		pending, err := w.PendingInviteByDiscordID(ctx, discordID)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
 			return err
+		}
+		if err == nil && (pending.ExpiresAt == nil || *pending.ExpiresAt > c.S.nowMs()) {
+			return conflict("That Discord account has a pending invite. Revoke it on the Officers page first, or let them accept it.")
+		}
+		if err == nil {
+			// Expired: clear it (as revoking would) so this account's own invite row can take its place.
+			if err := w.DeletePendingInvite(ctx, pending.ID); err != nil {
+				return err
+			}
 		}
 		if _, err := w.UserByDiscordID(ctx, discordID); err == nil {
 			return conflict("That Discord account already has a dashboard account.")

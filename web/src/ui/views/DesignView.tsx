@@ -41,6 +41,7 @@ import {
   fmtDue,
 } from '../../lib/design';
 import { fmtShort, fmtWeekday, plural, todayPacific } from '../../lib/format';
+import { pacificParts } from '../../lib/calendar';
 import { setParams, useSearch } from '../../lib/nav';
 import { href } from '../../lib/routes';
 import { StatRow } from '../components/StatRow';
@@ -461,9 +462,14 @@ function DueChip({ item }: { item: DesignRequestItem }) {
       <Icon name="clock" size={12} />
       {fmtDue(item.dueDate)}
       {s === 'overdue' ? ' · Overdue' : s === 'soon' ? ' · Due soon' : ''}
+      {afterEvent(item) && ' · After the event'}
     </span>
   );
 }
+
+/** The event moved earlier than the agreed due date: flag it for the designer and requester. */
+const afterEvent = (item: DesignRequestItem) =>
+  !!item.dueDate && !!item.event && item.event.status !== 'cancelled' && item.dueDate > pacificParts(item.event.startsAt).date;
 
 /**
  * One request card: type icon and title, the event and its date, approval/due/urgency chips,
@@ -487,6 +493,7 @@ function CardBody({ item, menu, grip }: { item: DesignRequestItem; menu: MenuIte
           <Icon name="calendar" size={13} />
           <a href={href.event(item.event.id)} draggable={false}>{item.event.name}</a>
           <span class="kanban-event-when">· {fmtShort(item.event.startsAt)}</span>
+          {item.event.status === 'cancelled' && <span class="kanban-event-when" data-event-cancelled> · event cancelled</span>}
         </p>
       ) : (
         item.program && <p class="kanban-event">{item.program}</p>
