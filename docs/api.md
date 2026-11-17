@@ -274,6 +274,8 @@ is `{ "results": [] }`. A missing or blank `q`, or a `limit` outside 1–50, is 
   default) the client is the right-most `X-Forwarded-For` hop that is not itself a trusted proxy;
   IPv6 clients share a budget per /64; each limiter tracks at most 10,000 clients. Direct loopback
   requests without the header (local tools, tests) are not limited.
+  `/mcp` is limited per agent connection (OAuth grant), not per IP: 120 JSON-RPC calls a minute,
+  then 429 with `Retry-After` and a JSON-RPC error body (see [mcp.md](mcp.md)).
 - **Audit.** Every state-changing call writes an `audit_log` row (append-only).
 
 ## Pages

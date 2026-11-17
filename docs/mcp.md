@@ -62,8 +62,14 @@ agent ── POST /mcp  Authorization: Bearer … ─▶ tools
   (at most 20 messages) and gets a JSON reply. An unsupported `MCP-Protocol-Version` header is
   a 400. `/mcp/` works too. No SSE stream, no sessions (`GET /mcp` is 405). CORS is open on the
   bearer-only endpoints (no cookies are accepted there).
-- **Rate limits.** POSTs to `/oauth/*` share the sign-in budget per IP; upload and import
-  tools draw on the same per-IP upload budget as the API routes.
+- **Rate limits.** Each agent connection (one OAuth grant; a token refresh keeps it) may make
+  120 calls a minute to `/mcp`, refilled continuously; every message in a batch counts. Over
+  that, `/mcp` answers 429 with `Retry-After` (seconds) and a JSON-RPC error (code `-32000`,
+  one per request in the message, ids echoed) whose message says when to try again; nothing in
+  the message runs. One agent's budget never touches another's, the same officer's or not.
+  Requests without a valid token get the usual 401 challenge before any budget is counted.
+  POSTs to `/oauth/*` share the sign-in budget per IP; upload and import tools also draw on
+  the same per-IP upload budget as the API routes.
 - **Housekeeping.** The hourly janitor drops expired codes and clients that never got a grant
   within a week.
 

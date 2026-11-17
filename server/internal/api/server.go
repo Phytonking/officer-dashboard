@@ -52,6 +52,9 @@ type Config struct {
 	// AuthRateLimit and UploadRateLimit are the requests per minute one client IP may make
 	// to /auth/* and to the upload/import routes. 0 uses the defaults; negative disables.
 	AuthRateLimit, UploadRateLimit int
+	// MCPRateLimit is the JSON-RPC calls per minute one agent connection (OAuth grant) may
+	// make to /mcp. 0 uses the default (120); negative disables.
+	MCPRateLimit int
 	// TrustedProxies are the peers whose X-Forwarded-For names the client (TRUSTED_PROXIES).
 	// nil means loopback only.
 	TrustedProxies []*net.IPNet
@@ -73,6 +76,7 @@ type Server struct {
 	inner http.Handler
 
 	authLimit, uploadLimit *rateLimiter
+	mcpLimit               *rateLimiter // keyed by OAuth grant id
 	trustedProxies         []*net.IPNet
 
 	sealer     *calendar.Sealer
@@ -112,6 +116,7 @@ func New(cfg Config) *Server {
 	}
 	s.authLimit = newRateLimiter(orDefault(cfg.AuthRateLimit, defaultAuthRateLimit), cfg.Now)
 	s.uploadLimit = newRateLimiter(orDefault(cfg.UploadRateLimit, defaultUploadRateLimit), cfg.Now)
+	s.mcpLimit = newRateLimiter(orDefault(cfg.MCPRateLimit, defaultMCPRateLimit), cfg.Now)
 	if cfg.Google != nil {
 		s.sealer = calendar.NewSealer(cfg.Google.ClientSecret)
 	}

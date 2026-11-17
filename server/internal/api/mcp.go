@@ -206,6 +206,11 @@ func (c *Ctx) mcpPost() error {
 		writeJSON(c.W, 400, rpcResponse{JSONRPC: "2.0", ID: json.RawMessage("null"), Error: &rpcError{-32600, fmt.Sprintf("Batch too large: at most %d messages", mcpMaxBatch)}})
 		return nil
 	}
+	// Each agent connection (grant) has its own budget; every message in a batch is a call.
+	if ok, wait := c.S.mcpLimit.allowN(g.ID, len(msgs)); !ok {
+		c.mcpRateLimited(msgs, batch, retryAfter(wait))
+		return nil
+	}
 	var out []rpcResponse
 	for _, m := range msgs {
 		if r := c.mcpHandle(p, m); r != nil {
@@ -223,6 +228,28 @@ func (c *Ctx) mcpPost() error {
 		writeJSON(c.W, 200, out[0])
 	}
 	return nil
+}
+
+// mcpRateLimited answers 429 with Retry-After and a JSON-RPC error for each request in the
+// message (or one with a null id when it held only notifications), so a client can show it.
+func (c *Ctx) mcpRateLimited(msgs []rpcMessage, batch bool, secs int) {
+	e := &rpcError{-32000, fmt.Sprintf("Rate limited: an agent connection may make %d calls a minute; try again in %d seconds", int(c.S.mcpLimit.perMinute), secs)}
+	var out []rpcResponse
+	for _, m := range msgs {
+		if m.Method != "" && len(m.ID) > 0 && string(m.ID) != "null" {
+			out = append(out, rpcResponse{JSONRPC: "2.0", ID: m.ID, Error: e})
+		}
+	}
+	c.W.Header().Set("Retry-After", strconv.Itoa(secs))
+	c.W.Header().Set("Cache-Control", "no-store")
+	switch {
+	case len(out) == 0:
+		writeJSON(c.W, http.StatusTooManyRequests, rpcResponse{JSONRPC: "2.0", ID: json.RawMessage("null"), Error: e})
+	case batch:
+		writeJSON(c.W, http.StatusTooManyRequests, out)
+	default:
+		writeJSON(c.W, http.StatusTooManyRequests, out[0])
+	}
 }
 
 // mcpHandle answers one JSON-RPC message; nil for notifications and client responses.

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -667,4 +668,71 @@ func TestOAuthRefreshReuseRevokes(t *testing.T) {
 	if err := e.db.R.QueryRow(`SELECT action FROM audit_log WHERE action = 'agent.revoked_token_reuse'`).Scan(&action); err != nil {
 		t.Fatalf("reuse not audited: %v", err)
 	}
+}
+
+// Each agent connection (OAuth grant) gets 120 /mcp calls a minute; one agent hitting it
+// leaves the officer's other agents and other officers' agents alone.
+func TestMCPRateLimitPerAgent(t *testing.T) {
+	e := newEnv(t)
+	cid, a := connectAgent(t, e, "user-director", "Claude Code")
+	_, b := connectAgent(t, e, "user-director", "Cursor") // same officer, second agent
+	_, c := connectAgent(t, e, "user-priya", "Claude Code")
+	at := a.str("access_token")
+	burn := func(n int) {
+		t.Helper()
+		for i := 0; i < n; i++ {
+			if r := mcpRPC(e, at, "ping", nil); r.Status != 200 {
+				t.Fatalf("call %d: %d %s", i+1, r.Status, r.Raw)
+			}
+		}
+	}
+	limited := func(what, token string) {
+		t.Helper()
+		r := e.do("POST", "/mcp", map[string]any{"jsonrpc": "2.0", "id": 7, "method": "ping"}, bearer(token))
+		if r.Status != 429 {
+			t.Fatalf("%s: want 429, got %d %s", what, r.Status, r.Raw)
+		}
+		if secs, err := strconv.Atoi(r.Header.Get("Retry-After")); err != nil || secs < 1 || secs > 60 {
+			t.Fatalf("%s: Retry-After %q", what, r.Header.Get("Retry-After"))
+		}
+		msg, _ := r.Body["error"].(map[string]any)["message"].(string)
+		if r.Body["jsonrpc"] != "2.0" || r.Body["id"] != float64(7) || r.Body["error"].(map[string]any)["code"] != float64(-32000) || !strings.Contains(msg, "120 calls a minute") {
+			t.Fatalf("%s: JSON-RPC error body: %s", what, r.Raw)
+		}
+	}
+
+	burn(defaultMCPRateLimit)
+	limited("121st call", at)
+	// Other agents, of the same officer and of another, are unaffected.
+	for name, tok := range map[string]string{"second agent": b.str("access_token"), "other officer": c.str("access_token")} {
+		if r := mcpRPC(e, tok, "ping", nil); r.Status != 200 {
+			t.Fatalf("%s: %d %s", name, r.Status, r.Raw)
+		}
+	}
+	// Refreshing the token keeps the connection's budget: it is the same grant.
+	next := e.mustOK(e.do("POST", "/oauth/token", url.Values{"grant_type": {"refresh_token"}, "refresh_token": {a.str("refresh_token")}, "client_id": {cid}}, loopback(anon)))
+	at = next.str("access_token")
+	limited("after refresh", at)
+	// Unauthenticated requests keep their 401 challenge.
+	expectStatus(t, "no token", e.do("POST", "/mcp", map[string]any{"jsonrpc": "2.0", "id": 1, "method": "ping"}, anon), 401)
+
+	// The budget refills: a minute later the agent has its full 120 calls again.
+	e.clock = e.clock.Add(time.Minute)
+	defer func() { e.clock = testNow }()
+	burn(defaultMCPRateLimit)
+	limited("121st call after reset", at)
+
+	// Every message in a batch is a call: a batch bigger than what is left is refused whole,
+	// with an error for each request in it.
+	e.clock = e.clock.Add(5 * time.Second) // 10 calls back
+	var batch []any
+	for i := 0; i < 11; i++ {
+		batch = append(batch, map[string]any{"jsonrpc": "2.0", "id": i, "method": "ping"})
+	}
+	r := e.do("POST", "/mcp", batch, bearer(at))
+	if r.Status != 429 || r.Header.Get("Retry-After") == "" || strings.Count(string(r.Raw), `"code":-32000`) != 11 {
+		t.Fatalf("over-budget batch: %d %s", r.Status, r.Raw)
+	}
+	expectStatus(t, "batch within budget", e.do("POST", "/mcp", batch[:10], bearer(at)), 200)
+	limited("after batch", at)
 }
